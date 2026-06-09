@@ -1,0 +1,16 @@
+node_modules/
+dist/
+dist-electron/
+*.log
+release/
+portable/
+.packtmp/
+resources/
+locales/
+*.exe
+*.dll
+*.pak
+*.bin
+*.dat
+*.jsonl
+*.tsbuildinfo
