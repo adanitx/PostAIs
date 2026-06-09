@@ -243,6 +243,8 @@ function App() {
     }
   });
   const [stopOnError, setStopOnError] = useState(false);
+  const [showImportPanel, setShowImportPanel] = useState(false);
+  const [showPreviewPanel, setShowPreviewPanel] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isTestingConnectivity, setIsTestingConnectivity] = useState(false);
   const [dispatchErrors, setDispatchErrors] = useState<string[]>([]);
@@ -1055,7 +1057,7 @@ function App() {
           aria-label={isNightMode ? 'Cambiar a modo claro' : 'Cambiar a modo noche'}
           title={isNightMode ? 'Cambiar a modo claro' : 'Cambiar a modo noche'}
         >
-          <span className="theme-toggle-icon" aria-hidden="true">🌙</span>
+          <span className="theme-toggle-icon" aria-hidden="true">{isNightMode ? '☀️' : '🌙'}</span>
           {isNightMode ? 'Modo claro' : 'Modo noche'}
         </button>
 
@@ -1170,8 +1172,8 @@ function App() {
             <label className="field compact-field">
               <span>Modo body</span>
               <select value={bodyMode} onChange={(event) => setBodyMode(event.target.value as BodyMode)}>
-                <option value="RAW">RAW por fila</option>
-                <option value="JSON">JSON templated</option>
+                <option value="RAW">RAW</option>
+                <option value="JSON">JSON</option>
               </select>
             </label>
           ) : null}
@@ -1297,9 +1299,21 @@ function App() {
         <section className="panel import-panel">
           <div className="panel-header">
             <h2>Importacion y recorrido por filas</h2>
-            <span>{rows.length} filas importadas</span>
+            <div className="action-row">
+              <span>{rows.length} filas importadas</span>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => setShowImportPanel((current) => !current)}
+                aria-expanded={showImportPanel}
+              >
+                {showImportPanel ? 'Ocultar' : 'Expandir'}
+              </button>
+            </div>
           </div>
 
+          {showImportPanel ? (
+            <>
           {importErrors.length > 0 ? (
             <div className="import-error-box">
               <strong>Errores o avisos de importacion</strong>
@@ -1346,12 +1360,63 @@ function App() {
           ) : (
             <p className="muted">Todavia no hay filas importadas para recorrer.</p>
           )}
+            </>
+          ) : (
+            <p className="muted">Panel colapsado. Pulsa "Expandir" para ver las filas importadas.</p>
+          )}
+        </section>
+        ) : null}
+
+        {method !== 'GET' ? (
+        <section className="split-layout split-layout-top">
+          <article className="panel preview-panel">
+            <div className="panel-header">
+              <h2>Preview</h2>
+              <div className="action-row">
+                <span>{previewRow ? `Fila ${previewRow.rowNumber}` : 'Sin datos'}</span>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => setShowPreviewPanel((current) => !current)}
+                  aria-expanded={showPreviewPanel}
+                >
+                  {showPreviewPanel ? 'Ocultar' : 'Expandir'}
+                </button>
+              </div>
+            </div>
+            {showPreviewPanel ? (
+              <>
+            <div className="preview-block">
+              <h3>Tupla importada</h3>
+              <pre>{previewRow ? formatJson(previewRow.cells) : 'Sin fila seleccionada.'}</pre>
+            </div>
+            <div className="preview-block">
+              <h3>Body resultante</h3>
+              <pre>
+                {previewState.error
+                  ? previewState.error
+                  : previewState.payload?.body !== undefined
+                    ? typeof previewState.payload.body === 'string'
+                      ? previewState.payload.body
+                      : formatJson(previewState.payload.body)
+                    : 'GET no envia body.'}
+              </pre>
+            </div>
+            <div className="preview-block">
+              <h3>RAW construido</h3>
+              <pre>{previewRawBody || 'Sin fila seleccionada.'}</pre>
+            </div>
+              </>
+            ) : (
+              <p className="muted">Panel colapsado. Pulsa "Expandir" para ver la preview de la fila seleccionada.</p>
+            )}
+          </article>
         </section>
         ) : null}
 
         <section className="panel action-panel">
           <div>
-            <h2>Protecciones y lote</h2>
+            <h2>Envio Mensajeria</h2>
             <p>
               {method === 'GET'
                 ? `${getEndpointTuples.filter((item) => item.trim() !== '').length} endpoint(s) GET listos para ejecutar.`
@@ -1406,11 +1471,43 @@ function App() {
                   </select>
                 </label>
 
-                <button type="button" className="secondary-button" disabled={rows.length === 0 || isSending} onClick={() => dispatchRows(rows.slice(selectedRowIndex, selectedRowIndex + 1))}>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={rows.length === 0 || isSending}
+                  onClick={() => {
+                    const selectedRow = rows[selectedRowIndex];
+
+                    if (!selectedRow) {
+                      return;
+                    }
+
+                    const confirmed = window.confirm(`Vas a enviar la fila ${selectedRow.rowNumber}. ¿Deseas continuar?`);
+
+                    if (!confirmed) {
+                      return;
+                    }
+
+                    dispatchRows(rows.slice(selectedRowIndex, selectedRowIndex + 1));
+                  }}
+                >
                   Enviar fila actual
                 </button>
 
-                <button type="button" className="primary-button" disabled={rows.length === 0 || isSending} onClick={() => dispatchRows(rows)}>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={rows.length === 0 || isSending}
+                  onClick={() => {
+                    const confirmed = window.confirm(`Vas a enviar el lote completo (${rows.length} fila(s)). ¿Deseas continuar?`);
+
+                    if (!confirmed) {
+                      return;
+                    }
+
+                    dispatchRows(rows);
+                  }}
+                >
                   Enviar lote completo
                 </button>
               </>
@@ -1423,37 +1520,6 @@ function App() {
             </button>
           </div>
         </section>
-
-        {method !== 'GET' ? (
-        <section className="split-layout split-layout-top">
-          <article className="panel preview-panel">
-            <div className="panel-header">
-              <h2>Preview</h2>
-              <span>{previewRow ? `Fila ${previewRow.rowNumber}` : 'Sin datos'}</span>
-            </div>
-            <div className="preview-block">
-              <h3>Tupla importada</h3>
-              <pre>{previewRow ? formatJson(previewRow.cells) : 'Sin fila seleccionada.'}</pre>
-            </div>
-            <div className="preview-block">
-              <h3>Body resultante</h3>
-              <pre>
-                {previewState.error
-                  ? previewState.error
-                  : previewState.payload?.body !== undefined
-                    ? typeof previewState.payload.body === 'string'
-                      ? previewState.payload.body
-                      : formatJson(previewState.payload.body)
-                    : 'GET no envia body.'}
-              </pre>
-            </div>
-            <div className="preview-block">
-              <h3>RAW construido</h3>
-              <pre>{previewRawBody || 'Sin fila seleccionada.'}</pre>
-            </div>
-          </article>
-        </section>
-        ) : null}
 
         <section className="panel results-panel" ref={resultsPanelRef}>
           <div className="panel-header">
