@@ -1,7 +1,7 @@
 {
   "name": "postais",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.2.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -9,7 +9,7 @@
     "build": "tsc -b && vite build",
     "postbuild": "npm run sync:exe",
     "sync:exe": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-exe.ps1",
-    "dist:win": "npm run build && electron-packager . PostAIs --platform=win32 --arch=x64 --icon=assets/icons/postais-box-wings.ico --out=release --overwrite --prune=true --ignore=release",
+    "dist:win": "npm run build && electron-packager . PostAIS --platform=win32 --arch=x64 --icon=assets/icons/postais-box-wings.ico --executable-name=PostAIS --win32metadata.FileDescription=PostAIS --win32metadata.ProductName=PostAIS --win32metadata.OriginalFilename=PostAIS.exe --win32metadata.InternalName=PostAIS --out=release --overwrite --prune=true --ignore=release && npm run sync:exe",
     "portable:prepare": "powershell -NoProfile -Command \"$ErrorActionPreference='Stop'; if (-not (Test-Path 'portable')) { New-Item 'portable' -ItemType Directory | Out-Null }; if (Test-Path 'portable/PostAIs') { Remove-Item 'portable/PostAIs' -Recurse -Force }; New-Item 'portable/PostAIs' -ItemType Directory | Out-Null; Copy-Item 'release/win-unpacked/*' 'portable/PostAIs' -Recurse -Force; if (Test-Path 'resources/app.asar') { Copy-Item 'resources/app.asar' 'portable/PostAIs/resources/app.asar' -Force }\"",
     "portable:zip": "powershell -NoProfile -Command \"$ErrorActionPreference='Stop'; if (Test-Path 'portable/PostAIs-portable.zip') { Remove-Item 'portable/PostAIs-portable.zip' -Force }; Compress-Archive -Path 'portable/PostAIs/*' -DestinationPath 'portable/PostAIs-portable.zip'\"",
     "portable:win": "npm run dist:win && npm run portable:prepare && npm run portable:zip",

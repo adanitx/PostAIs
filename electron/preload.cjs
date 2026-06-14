@@ -5,4 +5,5 @@ contextBridge.exposeInMainWorld('postais', {
   setSecret: (payload) => ipcRenderer.invoke('secrets:set', payload),
   deleteSecret: (payload) => ipcRenderer.invoke('secrets:delete', payload),
   listSecrets: () => ipcRenderer.invoke('secrets:list'),
+  saveTextFile: (payload) => ipcRenderer.invoke('file:saveText', payload),
 });

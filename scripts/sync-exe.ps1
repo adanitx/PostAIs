@@ -6,10 +6,28 @@ $distPath = Join-Path $root 'dist'
 $tmpAppPath = Join-Path $root '.packtmp\app'
 $releaseAsarPath = Join-Path $root 'release\win-unpacked\resources\app.asar'
 $rootExePath = Join-Path $root 'PostAIS.exe'
+$rceditPath = Join-Path $root 'node_modules\rcedit\bin\rcedit-x64.exe'
 $portableExeTargets = @(
   (Join-Path $root 'portable\PostAIS\PostAIS.exe'),
   (Join-Path $root 'portable\PostAIs\PostAIs.exe')
 )
+
+function Set-ExeMetadata {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$exePath
+  )
+
+  if (-not (Test-Path $exePath)) {
+    return
+  }
+
+  if (-not (Test-Path $rceditPath)) {
+    return
+  }
+
+  & $rceditPath $exePath --set-version-string FileDescription PostAIS --set-version-string ProductName PostAIS --set-version-string OriginalFilename PostAIS.exe --set-version-string InternalName PostAIS
+}
 
 if (-not (Test-Path $appAsarPath)) {
   throw "No existe app.asar en $appAsarPath"
@@ -64,16 +82,19 @@ foreach ($candidate in $releaseExeCandidates) {
 }
 
 if ($releaseExePath) {
+  Set-ExeMetadata -exePath $releaseExePath
   Copy-Item $releaseExePath $rootExePath -Force
+  Set-ExeMetadata -exePath $rootExePath
   (Get-Item $rootExePath).LastWriteTime = Get-Date
 
   foreach ($portableExeTarget in $portableExeTargets) {
     $portableExeDir = Split-Path -Parent $portableExeTarget
     if (Test-Path $portableExeDir) {
       Copy-Item $releaseExePath $portableExeTarget -Force
+      Set-ExeMetadata -exePath $portableExeTarget
       (Get-Item $portableExeTarget).LastWriteTime = Get-Date
     }
   }
 }
 
-Write-Output 'app.asar sincronizado con los ultimos cambios y PostAIs.exe listo para ejecutar.'
+Write-Output 'app.asar sincronizado con los ultimos cambios y PostAIS.exe listo para ejecutar.'

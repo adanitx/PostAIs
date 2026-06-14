@@ -427,19 +427,62 @@ ipcMain.handle('http:request', async (_event, request) => {
   }
 });
 
-app.whenReady().then(() => {
-  hydrateLocalSecrets();
-  createWindow();
+// ========== SINGLE INSTANCE PROTECTION ==========
+const gotTheLock = app.requestSingleInstanceLock();
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+if (!gotTheLock) {
+  // Another instance already running
+  app.whenReady().then(() => {
+    dialog.showMessageBox({
+      type: 'warning',
+      title: 'PostAIS ya está ejecutándose',
+      message: 'Ya existe una instancia de PostAIS en ejecución.',
+      detail: 'Elige una opción: terminar la instancia existente y arrancar de nuevo, o cerrar esta ventana.',
+      buttons: ['Finalizarlo y arrancar de nuevo', 'Cerrar'],
+      defaultId: 1,
+      cancelId: 1,
+    }).then((result) => {
+      if (result.response === 0) {
+        // Kill existing and restart
+        app.quit();
+        setTimeout(() => {
+          const { spawn } = require('child_process');
+          spawn(process.execPath, process.argv.slice(1), { detached: true });
+        }, 500);
+      } else {
+        // Just quit
+        app.quit();
+      }
+    }).catch(() => {
+      app.quit();
+    });
+  });
+} else {
+  // This is the primary instance
+  app.on('second-instance', () => {
+    // Bring existing window to front
+    const windows = BrowserWindow.getAllWindows();
+    if (windows.length > 0) {
+      const mainWindow = windows[0];
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
     }
   });
-});
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});
+  app.whenReady().then(() => {
+    hydrateLocalSecrets();
+    createWindow();
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
+  });
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+      app.quit();
+    }
+  });
+}
