@@ -108,6 +108,23 @@ interface FavoriteCommandsExportFile {
   items: FavoriteCommandEntry[];
 }
 
+interface FavoriteBaseEndpointDraftState {
+  name: string;
+  baseUrl: string;
+  description: string;
+  environment: FavoriteEnvironment;
+}
+
+interface FavoriteCommandDraftState {
+  name: string;
+  command: string;
+  description: string;
+  environment: FavoriteEnvironment;
+  method: HttpMethod;
+  defaultRawBody: string;
+  postResponseScript: string;
+}
+
 interface DescriptionDialogState {
   favoriteId: string;
   currentValue: string;
@@ -851,6 +868,20 @@ function normalizeRestDescription(value: string): string {
   return value.slice(0, MAX_REST_DESCRIPTION_LENGTH);
 }
 
+function getFavoriteMatchRank(value: string, query: string): number {
+  const normalizedValue = value.toLowerCase();
+
+  if (normalizedValue.startsWith(query)) {
+    return 0;
+  }
+
+  if (normalizedValue.includes(query)) {
+    return 1;
+  }
+
+  return 2;
+}
+
 function toFavoriteEndpointEntry(value: string | FavoriteEndpointEntry): FavoriteEndpointEntry | null {
   if (typeof value === 'string') {
     const normalizedUrl = normalizeFavoriteEndpoint(value);
@@ -1059,10 +1090,19 @@ function getMatchingFavoriteEndpoints(query: string, favorites: FavoriteEndpoint
       || favorite.description.toLowerCase().includes(normalizedQuery),
     )
     .sort((left, right) => {
-      const leftStarts = left.url.toLowerCase().startsWith(normalizedQuery) || left.name.toLowerCase().startsWith(normalizedQuery) ? 0 : 1;
-      const rightStarts = right.url.toLowerCase().startsWith(normalizedQuery) || right.name.toLowerCase().startsWith(normalizedQuery) ? 0 : 1;
-      if (leftStarts !== rightStarts) {
-        return leftStarts - rightStarts;
+      const leftRank = Math.min(
+        getFavoriteMatchRank(left.url, normalizedQuery),
+        getFavoriteMatchRank(left.name, normalizedQuery),
+        getFavoriteMatchRank(left.description, normalizedQuery),
+      );
+      const rightRank = Math.min(
+        getFavoriteMatchRank(right.url, normalizedQuery),
+        getFavoriteMatchRank(right.name, normalizedQuery),
+        getFavoriteMatchRank(right.description, normalizedQuery),
+      );
+
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
       }
 
       return left.name.localeCompare(right.name);
@@ -1083,10 +1123,19 @@ function getMatchingFavoriteBaseEndpoints(query: string, favorites: FavoriteBase
       || favorite.description.toLowerCase().includes(normalizedQuery),
     )
     .sort((left, right) => {
-      const leftStarts = left.baseUrl.toLowerCase().startsWith(normalizedQuery) || left.name.toLowerCase().startsWith(normalizedQuery) ? 0 : 1;
-      const rightStarts = right.baseUrl.toLowerCase().startsWith(normalizedQuery) || right.name.toLowerCase().startsWith(normalizedQuery) ? 0 : 1;
-      if (leftStarts !== rightStarts) {
-        return leftStarts - rightStarts;
+      const leftRank = Math.min(
+        getFavoriteMatchRank(left.baseUrl, normalizedQuery),
+        getFavoriteMatchRank(left.name, normalizedQuery),
+        getFavoriteMatchRank(left.description, normalizedQuery),
+      );
+      const rightRank = Math.min(
+        getFavoriteMatchRank(right.baseUrl, normalizedQuery),
+        getFavoriteMatchRank(right.name, normalizedQuery),
+        getFavoriteMatchRank(right.description, normalizedQuery),
+      );
+
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
       }
 
       return left.name.localeCompare(right.name);
@@ -1095,7 +1144,7 @@ function getMatchingFavoriteBaseEndpoints(query: string, favorites: FavoriteBase
 }
 
 function getMatchingFavoriteCommands(query: string, favorites: FavoriteCommandEntry[]): FavoriteCommandEntry[] {
-  const normalizedQuery = normalizeFavoriteCommand(query).toLowerCase();
+  const normalizedQuery = query.trim().toLowerCase();
   if (normalizedQuery.length < 1) {
     return [];
   }
@@ -1107,10 +1156,19 @@ function getMatchingFavoriteCommands(query: string, favorites: FavoriteCommandEn
       || favorite.description.toLowerCase().includes(normalizedQuery),
     )
     .sort((left, right) => {
-      const leftStarts = left.command.toLowerCase().startsWith(normalizedQuery) || left.name.toLowerCase().startsWith(normalizedQuery) ? 0 : 1;
-      const rightStarts = right.command.toLowerCase().startsWith(normalizedQuery) || right.name.toLowerCase().startsWith(normalizedQuery) ? 0 : 1;
-      if (leftStarts !== rightStarts) {
-        return leftStarts - rightStarts;
+      const leftRank = Math.min(
+        getFavoriteMatchRank(left.command, normalizedQuery),
+        getFavoriteMatchRank(left.name, normalizedQuery),
+        getFavoriteMatchRank(left.description, normalizedQuery),
+      );
+      const rightRank = Math.min(
+        getFavoriteMatchRank(right.command, normalizedQuery),
+        getFavoriteMatchRank(right.name, normalizedQuery),
+        getFavoriteMatchRank(right.description, normalizedQuery),
+      );
+
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
       }
 
       return left.name.localeCompare(right.name);
@@ -1821,6 +1879,27 @@ function App() {
       return 'DEV';
     }
   });
+  const [showFavoriteBaseCreateForm, setShowFavoriteBaseCreateForm] = useState(false);
+  const [showFavoriteCommandCreateForm, setShowFavoriteCommandCreateForm] = useState(false);
+  const [editingFavoriteBaseDescriptionId, setEditingFavoriteBaseDescriptionId] = useState<string | null>(null);
+  const [editingFavoriteCommandDescriptionId, setEditingFavoriteCommandDescriptionId] = useState<string | null>(null);
+  const [favoriteBaseDescriptionDraft, setFavoriteBaseDescriptionDraft] = useState('');
+  const [favoriteCommandDescriptionDraft, setFavoriteCommandDescriptionDraft] = useState('');
+  const [favoriteBaseEndpointDraft, setFavoriteBaseEndpointDraft] = useState<FavoriteBaseEndpointDraftState>({
+    name: '',
+    baseUrl: '',
+    description: '',
+    environment: 'DEV',
+  });
+  const [favoriteCommandDraft, setFavoriteCommandDraft] = useState<FavoriteCommandDraftState>({
+    name: '',
+    command: '',
+    description: '',
+    environment: 'DEV',
+    method: 'GET',
+    defaultRawBody: '',
+    postResponseScript: '',
+  });
   const [historySearch, setHistorySearch] = useState('');
   const [historyMethodFilter, setHistoryMethodFilter] = useState<'ALL' | HttpMethod>('ALL');
   const [favoriteEndpointSearch, setFavoriteEndpointSearch] = useState('');
@@ -1835,6 +1914,7 @@ function App() {
   const [endpointParamGroupDialog, setEndpointParamGroupDialog] = useState<EndpointParamGroupDialogState | null>(null);
   const [postResponseColumnNameDrafts, setPostResponseColumnNameDrafts] = useState<Record<string, Record<string, string>>>({});
   const [postResponseColumnOrders, setPostResponseColumnOrders] = useState<Record<string, string[]>>({});
+  const [postResponseTableFilters, setPostResponseTableFilters] = useState<Record<string, { columnKey: string; value: string }>>({});
   const [draggedColumnInfo, setDraggedColumnInfo] = useState<{ scriptId: string; columnKey: string } | null>(null);
   const [descriptionDraft, setDescriptionDraft] = useState('');
   const [showBasicAuthFieldErrors, setShowBasicAuthFieldErrors] = useState(false);
@@ -1852,6 +1932,8 @@ function App() {
   const favoriteCommandsImportInputRef = useRef<HTMLInputElement | null>(null);
   const pendingConfirmActionRef = useRef<null | (() => void)>(null);
   const authBootstrapDoneRef = useRef(false);
+  const skipBaseDescriptionBlurRef = useRef(false);
+  const skipCommandDescriptionBlurRef = useRef(false);
 
   const selectedGetEndpoint = getEndpointTuples[selectedGetEndpointIndex] ?? '';
   const focusedGetEndpoint = focusedGetEndpointIndex === null ? '' : (getEndpointTuples[focusedGetEndpointIndex] ?? '');
@@ -2253,6 +2335,11 @@ function App() {
   }, [favoriteEnvironment]);
 
   useEffect(() => {
+    setFavoriteBaseEndpointDraft((current) => ({ ...current, environment: favoriteEnvironment }));
+    setFavoriteCommandDraft((current) => ({ ...current, environment: favoriteEnvironment }));
+  }, [favoriteEnvironment]);
+
+  useEffect(() => {
     if (focusedGetEndpointIndex !== null && focusedGetEndpointIndex >= getEndpointTuples.length) {
       setFocusedGetEndpointIndex(null);
     }
@@ -2359,7 +2446,7 @@ function App() {
     );
   }
 
-  function toggleFavoriteBaseEndpoint(value: string, endpointMethod: HttpMethod) {
+  function toggleFavoriteBaseEndpoint(value: string) {
     const normalized = normalizeFavoriteBaseEndpoint(value);
     if (!normalized) {
       setStatusMessage('Escribe un endpoint base valido antes de anadirlo a favoritos.');
@@ -2379,12 +2466,58 @@ function App() {
         name: normalizeFavoriteName(createDefaultFavoriteBaseEndpointName(normalized)),
         description: '',
         baseUrl: normalized,
-        method: endpointMethod,
+        method: 'GET',
         environment: favoriteEnvironment,
         createdAt: new Date().toISOString(),
       }, ...current.filter((entry) => !(entry.baseUrl === normalized && entry.environment === favoriteEnvironment))];
     });
   }
+
+    function saveFavoriteBaseEndpointDraft() {
+      const normalizedBaseUrl = normalizeFavoriteBaseEndpoint(favoriteBaseEndpointDraft.baseUrl);
+      const normalizedName = normalizeFavoriteName(favoriteBaseEndpointDraft.name || createDefaultFavoriteBaseEndpointName(normalizedBaseUrl));
+      const normalizedDescription = normalizeRestDescription(favoriteBaseEndpointDraft.description);
+
+      if (!normalizedBaseUrl) {
+        setStatusMessage('Escribe una URL base valida antes de guardarla.');
+        return;
+      }
+
+      let created = false;
+
+      setFavoriteBaseEndpoints((current) => {
+        const existing = current.find((entry) => entry.baseUrl === normalizedBaseUrl && entry.environment === favoriteBaseEndpointDraft.environment);
+        if (existing) {
+          setStatusMessage('Ese endpoint base ya existe en favoritos.');
+          return current;
+        }
+
+        created = true;
+
+        return [{
+          id: createHistoryId(),
+          name: normalizedName,
+          description: normalizedDescription,
+          baseUrl: normalizedBaseUrl,
+          method: 'GET',
+          environment: favoriteBaseEndpointDraft.environment,
+          createdAt: new Date().toISOString(),
+        }, ...current];
+      });
+
+    if (!created) {
+      return;
+    }
+
+      setFavoriteBaseEndpointDraft({
+        name: '',
+        baseUrl: '',
+        description: '',
+        environment: favoriteEnvironment,
+      });
+      setShowFavoriteBaseCreateForm(false);
+      setStatusMessage('Endpoint base favorito creado.');
+    }
 
   function toggleFavoriteCommand(value: string, endpointMethod: HttpMethod) {
     const normalized = normalizeFavoriteCommand(value);
@@ -2423,6 +2556,65 @@ function App() {
         createdAt: new Date().toISOString(),
       }, ...current];
     });
+  }
+
+  function saveFavoriteCommandDraft() {
+    const normalizedCommand = normalizeFavoriteCommand(favoriteCommandDraft.command);
+    const normalizedName = normalizeFavoriteName(favoriteCommandDraft.name || createDefaultFavoriteCommandName(normalizedCommand));
+    const normalizedDescription = normalizeRestDescription(favoriteCommandDraft.description);
+
+    if (!normalizedCommand) {
+      setStatusMessage('Escribe un comando valido antes de guardarlo.');
+      return;
+    }
+
+    let created = false;
+
+    setFavoriteCommands((current) => {
+      const existing = current.find((entry) => (
+        entry.command === normalizedCommand
+        && entry.method === favoriteCommandDraft.method
+        && entry.environment === favoriteCommandDraft.environment
+        && (entry.defaultRawBody ?? '') === favoriteCommandDraft.defaultRawBody
+        && normalizeRestDescription(entry.description ?? '') === normalizedDescription
+        && (entry.postResponseScript ?? '') === favoriteCommandDraft.postResponseScript
+      ));
+
+      if (existing) {
+        setStatusMessage('Ese comando favorito ya existe.');
+        return current;
+      }
+
+      created = true;
+
+      return [{
+        id: createHistoryId(),
+        name: normalizedName,
+        description: normalizedDescription,
+        command: normalizedCommand,
+        defaultRawBody: favoriteCommandDraft.method === 'POST' ? favoriteCommandDraft.defaultRawBody : '',
+        postResponseScript: favoriteCommandDraft.postResponseScript,
+        method: favoriteCommandDraft.method,
+        environment: favoriteCommandDraft.environment,
+        createdAt: new Date().toISOString(),
+      }, ...current];
+    });
+
+    if (!created) {
+      return;
+    }
+
+    setFavoriteCommandDraft({
+      name: '',
+      command: '',
+      description: '',
+      environment: favoriteEnvironment,
+      method,
+      defaultRawBody: '',
+      postResponseScript: '',
+    });
+    setShowFavoriteCommandCreateForm(false);
+    setStatusMessage('Comando favorito creado.');
   }
 
   function updateBaseEndpoint(value: string) {
@@ -2926,6 +3118,7 @@ function App() {
                 title={entry.baseUrl}
               >
                 <span>{entry.name}</span>
+                {entry.description ? <span className="favorite-match-url">{entry.description}</span> : null}
                 <span className="favorite-match-url">{entry.baseUrl}</span>
               </button>
             ))}
@@ -2963,6 +3156,7 @@ function App() {
                 title={entry.command}
               >
                 <span>{entry.name}</span>
+                {entry.description ? <span className="favorite-match-url">{entry.description}</span> : null}
                 <span className="favorite-match-url">{entry.command}</span>
               </button>
             ))}
@@ -3253,6 +3447,41 @@ function App() {
     )));
   }
 
+  function updateFavoriteBaseEndpointDescription(id: string, description: string) {
+    if (editingFavoriteBaseDescriptionId !== id) {
+      return;
+    }
+
+    setFavoriteBaseDescriptionDraft(description);
+  }
+
+  function clampFavoriteBaseEndpointDescription(id: string) {
+    if (editingFavoriteBaseDescriptionId !== id) {
+      return;
+    }
+
+    const normalizedDescription = normalizeRestDescription(favoriteBaseDescriptionDraft);
+    setFavoriteBaseEndpoints((current) => current.map((entry) => (
+      entry.id === id ? { ...entry, description: normalizedDescription } : entry
+    )));
+
+    if (favoriteBaseDescriptionDraft.length > MAX_REST_DESCRIPTION_LENGTH) {
+      setStatusMessage(`La descripcion se recorto a ${MAX_REST_DESCRIPTION_LENGTH} caracteres.`);
+    }
+
+    setEditingFavoriteBaseDescriptionId(null);
+    setFavoriteBaseDescriptionDraft('');
+  }
+
+  function cancelFavoriteBaseEndpointDescriptionEdit(id: string) {
+    if (editingFavoriteBaseDescriptionId !== id) {
+      return;
+    }
+
+    setEditingFavoriteBaseDescriptionId(null);
+    setFavoriteBaseDescriptionDraft('');
+  }
+
   function commitFavoriteBaseEndpointName(id: string) {
     setFavoriteBaseEndpoints((current) => current.map((entry) => {
       if (entry.id !== id) {
@@ -3273,6 +3502,41 @@ function App() {
     setFavoriteCommands((current) => current.map((entry) => (
       entry.id === id ? { ...entry, name: name.slice(0, MAX_FAVORITE_NAME_LENGTH) } : entry
     )));
+  }
+
+  function updateFavoriteCommandDescription(id: string, description: string) {
+    if (editingFavoriteCommandDescriptionId !== id) {
+      return;
+    }
+
+    setFavoriteCommandDescriptionDraft(description);
+  }
+
+  function clampFavoriteCommandDescription(id: string) {
+    if (editingFavoriteCommandDescriptionId !== id) {
+      return;
+    }
+
+    const normalizedDescription = normalizeRestDescription(favoriteCommandDescriptionDraft);
+    setFavoriteCommands((current) => current.map((entry) => (
+      entry.id === id ? { ...entry, description: normalizedDescription } : entry
+    )));
+
+    if (favoriteCommandDescriptionDraft.length > MAX_REST_DESCRIPTION_LENGTH) {
+      setStatusMessage(`La descripcion se recorto a ${MAX_REST_DESCRIPTION_LENGTH} caracteres.`);
+    }
+
+    setEditingFavoriteCommandDescriptionId(null);
+    setFavoriteCommandDescriptionDraft('');
+  }
+
+  function cancelFavoriteCommandDescriptionEdit(id: string) {
+    if (editingFavoriteCommandDescriptionId !== id) {
+      return;
+    }
+
+    setEditingFavoriteCommandDescriptionId(null);
+    setFavoriteCommandDescriptionDraft('');
   }
 
   function commitFavoriteCommandName(id: string) {
@@ -4101,11 +4365,9 @@ function App() {
     const resolvedRaw = tupleId !== undefined
       ? resolveRawBodyForPostTuple(tupleId)
       : resolveRawBodyForEndpoint(endpointOverride ?? (composedEndpoint || endpoint));
-    const resolvedRawBody = tupleId !== undefined
+    const resolvedRawBody = resolvedRaw !== ''
       ? applyStringTemplate(resolvedRaw, row.fields, 'mask-secrets')
-      : (resolvedRaw.trim()
-        ? applyStringTemplate(resolvedRaw, row.fields, 'mask-secrets')
-        : buildRawBody(row.cells, rawDelimiter));
+      : buildRawBody(row.cells, rawDelimiter);
 
     return {
       method,
@@ -4138,11 +4400,9 @@ function App() {
     const resolvedRaw = tupleId !== undefined
       ? resolveRawBodyForPostTuple(tupleId)
       : resolveRawBodyForEndpoint(endpointOverride ?? (composedEndpoint || endpoint));
-    const resolvedRawBody = tupleId !== undefined
+    const resolvedRawBody = resolvedRaw !== ''
       ? applyStringTemplate(resolvedRaw, row.fields, 'keep-secret-placeholders')
-      : (resolvedRaw.trim()
-        ? applyStringTemplate(resolvedRaw, row.fields, 'keep-secret-placeholders')
-        : buildRawBody(row.cells, rawDelimiter));
+      : buildRawBody(row.cells, rawDelimiter);
 
     return {
       method,
@@ -4275,6 +4535,7 @@ function App() {
       const outputColumnOrder = Array.isArray(output.columnOrder) ? output.columnOrder.filter((col) => typeof col === 'string') : [];
       const draftColumnNames = scriptStorageKey ? (postResponseColumnNameDrafts[scriptStorageKey] ?? {}) : {};
       const resolvedColumnNames = { ...baseColumnNames, ...draftColumnNames };
+      const currentTableFilter = scriptStorageKey ? (postResponseTableFilters[scriptStorageKey] ?? { columnKey: '', value: '' }) : { columnKey: '', value: '' };
 
       const getColumnTooltip = (column: string): string => {
         const customName = resolvedColumnNames[column] ?? column;
@@ -4423,7 +4684,7 @@ function App() {
       const handleCopyTableToClipboard = async () => {
         try {
           const orderedCols = getOrderedColumns();
-          const tsv = tableToTsv(orderedCols, rows, resolvedColumnNames);
+          const tsv = tableToTsv(orderedCols, filteredRows, resolvedColumnNames);
           await copyToClipboard(tsv);
           setStatusMessage('Tabla copiada al portapapeles. Puedes pegarla en Excel.');
         } catch (error) {
@@ -4432,18 +4693,127 @@ function App() {
       };
 
       const orderedColumns = getOrderedColumns();
+      const availableFilterColumns = orderedColumns.map((column) => ({
+        key: column,
+        label: resolvedColumnNames[column] ?? column,
+      }));
+      const activeFilterColumn = currentTableFilter.columnKey && orderedColumns.includes(currentTableFilter.columnKey)
+        ? currentTableFilter.columnKey
+        : '';
+      const availableFilterValues = activeFilterColumn
+        ? Array.from(new Set(rows.map((row) => {
+            const value = row[activeFilterColumn];
+            if (value === null || value === undefined) {
+              return '';
+            }
+
+            return typeof value === 'object' ? JSON.stringify(value) : String(value);
+          })))
+        : [];
+      const filteredRows = activeFilterColumn && currentTableFilter.value !== ''
+        ? rows.filter((row) => {
+            const value = row[activeFilterColumn];
+            const normalizedValue = value === null || value === undefined
+              ? ''
+              : typeof value === 'object'
+                ? JSON.stringify(value)
+                : String(value);
+            return normalizedValue === currentTableFilter.value;
+          })
+        : rows;
+
+      const getFilterValueLabel = (value: string): string => (value === '' ? '(vacío)' : value);
 
       return (
         <div className="post-response-table-container">
           <div className="post-response-table-controls">
-            <button
-              type="button"
-              className="ghost-button"
-              onClick={handleCopyTableToClipboard}
-              title="Copiar tabla en formato TSV para pegar en Excel"
-            >
-              Copiar tabla
-            </button>
+            <div className="post-response-table-filters">
+              <label className="field compact-field post-response-table-filter-field">
+                <span>Filtrar por columna</span>
+                <select
+                  value={activeFilterColumn}
+                  onChange={(event) => {
+                    if (!scriptStorageKey) {
+                      return;
+                    }
+
+                    const nextColumnKey = event.target.value;
+                    setPostResponseTableFilters((current) => ({
+                      ...current,
+                      [scriptStorageKey]: {
+                        columnKey: nextColumnKey,
+                        value: '',
+                      },
+                    }));
+                  }}
+                >
+                  <option value="">Todas las columnas</option>
+                  {availableFilterColumns.map((column) => (
+                    <option key={`filter-column-${column.key}`} value={column.key}>
+                      {column.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field compact-field post-response-table-filter-field">
+                <span>Filtrar por valor</span>
+                <select
+                  value={currentTableFilter.value}
+                  onChange={(event) => {
+                    if (!scriptStorageKey) {
+                      return;
+                    }
+
+                    setPostResponseTableFilters((current) => ({
+                      ...current,
+                      [scriptStorageKey]: {
+                        columnKey: activeFilterColumn,
+                        value: event.target.value,
+                      },
+                    }));
+                  }}
+                  disabled={!activeFilterColumn || availableFilterValues.length === 0}
+                >
+                  <option value="">Todos los valores</option>
+                  {availableFilterValues.map((value) => (
+                    <option key={`filter-value-${activeFilterColumn}-${value}`} value={value}>
+                      {getFilterValueLabel(value)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => {
+                  if (!scriptStorageKey) {
+                    return;
+                  }
+
+                  setPostResponseTableFilters((current) => ({
+                    ...current,
+                    [scriptStorageKey]: {
+                      columnKey: '',
+                      value: '',
+                    },
+                  }));
+                }}
+                disabled={!activeFilterColumn && currentTableFilter.value === ''}
+              >
+                Limpiar filtro
+              </button>
+
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={handleCopyTableToClipboard}
+                title="Copiar tabla en formato TSV para pegar en Excel"
+              >
+                Copiar tabla
+              </button>
+            </div>
           </div>
           <div className="post-response-table-wrap">
             <table className="post-response-table">
@@ -4482,7 +4852,11 @@ function App() {
                   <tr>
                     <td colSpan={Math.max(orderedColumns.length, 1)}>Sin filas generadas por el script.</td>
                   </tr>
-                ) : rows.map((row, rowIndex) => (
+                ) : filteredRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={Math.max(orderedColumns.length, 1)}>No hay filas que coincidan con el filtro seleccionado.</td>
+                  </tr>
+                ) : filteredRows.map((row, rowIndex) => (
                   <tr key={`script-row-${rowIndex}`}>
                     {orderedColumns.map((column) => {
                       const value = row[column];
@@ -4534,8 +4908,8 @@ function App() {
 
   function finalizeImportedRows(matrix: string[][], importedFileName: string, sourceLabel: string) {
     const normalizedRows = matrix
-      .map((row) => row.map((cell) => String(cell ?? '').trim()))
-      .filter((row) => row.some((cell) => cell !== ''));
+      .map((row) => row.map((cell) => String(cell ?? '')))
+      .filter((row) => row.some((cell) => cell.trim() !== ''));
 
     if (normalizedRows.length === 0) {
       setRows([]);
@@ -4559,7 +4933,7 @@ function App() {
     }
 
     const importedRows = tupleRows
-      .filter((cells) => cells.some((cell) => cell !== ''))
+      .filter((cells) => cells.some((cell) => cell.trim() !== ''))
       .map((cells, index) => {
         const expectedLength = headers ? headers.length : cells.length;
 
@@ -4633,10 +5007,12 @@ function App() {
     Papa.parse<string[]>(file, {
       skipEmptyLines: 'greedy',
       complete: ({ data, errors }) => {
-        if (errors.length > 0) {
+        const blockingErrors = errors.filter((error) => error.code !== 'UndetectableDelimiter');
+
+        if (blockingErrors.length > 0) {
           setRows([]);
-          setImportErrors(errors.map((error) => `Fila ${error.row ?? '?'}: ${error.message}`));
-          setStatusMessage(`El CSV contiene ${errors.length} error(es). Revisa el formato y vuelve a cargarlo.`);
+          setImportErrors(blockingErrors.map((error) => `Fila ${error.row ?? '?'}: ${error.message}`));
+          setStatusMessage(`El CSV contiene ${blockingErrors.length} error(es). Revisa el formato y vuelve a cargarlo.`);
           return;
         }
 
@@ -5669,44 +6045,51 @@ function App() {
           <div className="field stretch-full endpoint-composer-panel">
             <span>Constructor de Endpoint</span>
             <div className="endpoint-composer-grid">
-              <div className="endpoint-input-row">
-                <input
-                  type="text"
-                  value={baseEndpoint}
-                  onFocus={() => setIsBaseEndpointFocused(true)}
-                  onBlur={() => setIsBaseEndpointFocused(false)}
-                  onChange={(event) => updateBaseEndpoint(event.target.value)}
-                  placeholder="https://host/servicio-base"
-                />
-                <button
-                  type="button"
-                  className={`favorite-toggle-button ${isFavoriteBaseEndpoint(baseEndpoint) ? 'favorite-toggle-button-active' : ''}`}
-                  onClick={() => toggleFavoriteBaseEndpoint(baseEndpoint, method)}
-                  title={isFavoriteBaseEndpoint(baseEndpoint) ? 'Quitar endpoint base de favoritos' : 'Anadir endpoint base a favoritos'}
-                  aria-label={isFavoriteBaseEndpoint(baseEndpoint) ? 'Quitar endpoint base de favoritos' : 'Anadir endpoint base a favoritos'}
-                >
-                  {isFavoriteBaseEndpoint(baseEndpoint) ? '★' : '☆'}
-                </button>
-              </div>
-              <div className="endpoint-input-row">
-                <input
-                  type="text"
-                  value={commandEndpoint}
-                  onFocus={() => setIsCommandEndpointFocused(true)}
-                  onBlur={() => setIsCommandEndpointFocused(false)}
-                  onChange={(event) => updateCommandEndpoint(event.target.value)}
-                  placeholder="/v2/aisles"
-                />
-                <button
-                  type="button"
-                  className={`favorite-toggle-button ${isFavoriteCommand(commandEndpoint, method) ? 'favorite-toggle-button-active' : ''}`}
-                  onClick={() => toggleFavoriteCommand(commandEndpoint, method)}
-                  title={isFavoriteCommand(commandEndpoint, method) ? 'Quitar comando de favoritos' : 'Anadir comando a favoritos'}
-                  aria-label={isFavoriteCommand(commandEndpoint, method) ? 'Quitar comando de favoritos' : 'Anadir comando a favoritos'}
-                >
-                  {isFavoriteCommand(commandEndpoint, method) ? '★' : '☆'}
-                </button>
-              </div>
+              <label className="field endpoint-composer-item">
+                <span>Endpoint base</span>
+                <div className="endpoint-input-row">
+                  <input
+                    type="text"
+                    value={baseEndpoint}
+                    onFocus={() => setIsBaseEndpointFocused(true)}
+                    onBlur={() => setIsBaseEndpointFocused(false)}
+                    onChange={(event) => updateBaseEndpoint(event.target.value)}
+                    placeholder="https://host/servicio-base"
+                  />
+                  <button
+                    type="button"
+                    className={`favorite-toggle-button ${isFavoriteBaseEndpoint(baseEndpoint) ? 'favorite-toggle-button-active' : ''}`}
+                    onClick={() => toggleFavoriteBaseEndpoint(baseEndpoint)}
+                    title={isFavoriteBaseEndpoint(baseEndpoint) ? 'Quitar endpoint base de favoritos' : 'Anadir endpoint base a favoritos'}
+                    aria-label={isFavoriteBaseEndpoint(baseEndpoint) ? 'Quitar endpoint base de favoritos' : 'Anadir endpoint base a favoritos'}
+                  >
+                    {isFavoriteBaseEndpoint(baseEndpoint) ? '★' : '☆'}
+                  </button>
+                </div>
+              </label>
+
+              <label className="field endpoint-composer-item">
+                <span>Comando</span>
+                <div className="endpoint-input-row">
+                  <input
+                    type="text"
+                    value={commandEndpoint}
+                    onFocus={() => setIsCommandEndpointFocused(true)}
+                    onBlur={() => setIsCommandEndpointFocused(false)}
+                    onChange={(event) => updateCommandEndpoint(event.target.value)}
+                    placeholder="/v2/example"
+                  />
+                  <button
+                    type="button"
+                    className={`favorite-toggle-button ${isFavoriteCommand(commandEndpoint, method) ? 'favorite-toggle-button-active' : ''}`}
+                    onClick={() => toggleFavoriteCommand(commandEndpoint, method)}
+                    title={isFavoriteCommand(commandEndpoint, method) ? 'Quitar comando de favoritos' : 'Anadir comando a favoritos'}
+                    aria-label={isFavoriteCommand(commandEndpoint, method) ? 'Quitar comando de favoritos' : 'Anadir comando a favoritos'}
+                  >
+                    {isFavoriteCommand(commandEndpoint, method) ? '★' : '☆'}
+                  </button>
+                </div>
+              </label>
             </div>
 
             {renderBaseEndpointMatches()}
@@ -6421,7 +6804,7 @@ function App() {
             <section className="panel action-panel">
               <div>
                 <h2>Favoritos</h2>
-                <p>Gestiona endpoints conocidos reutilizables.</p>
+                <p>Gestiona endpoints conocidos reutilizables y crea nuevos manualmente desde aqui.</p>
               </div>
               <div className="action-row">
                 <button type="button" className="secondary-button" onClick={() => favoriteBaseEndpointsImportInputRef.current?.click()}>
@@ -6447,6 +6830,189 @@ function App() {
                   </>
                 ) : null}
               </div>
+
+              <div className="favorites-create-stack">
+                <div className="favorites-create-dropdown">
+                  <button
+                    type="button"
+                    className="ghost-button favorites-create-toggle"
+                    onClick={() => setShowFavoriteBaseCreateForm((current) => !current)}
+                    aria-expanded={showFavoriteBaseCreateForm}
+                  >
+                    <span className={`menu-arrow ${showFavoriteBaseCreateForm ? 'open' : ''}`}>▶</span>
+                    Añadir endpoint base manualmente
+                  </button>
+                  {showFavoriteBaseCreateForm ? (
+                    <div className="favorites-create-panel">
+                      <div className="favorites-create-grid">
+                        <label className="field compact-field">
+                          <span>Nombre</span>
+                          <input
+                            value={favoriteBaseEndpointDraft.name}
+                            onChange={(event) => setFavoriteBaseEndpointDraft((current) => ({ ...current, name: event.target.value }))}
+                            placeholder="Pedidos base"
+                          />
+                        </label>
+                        <label className="field compact-field">
+                          <span>URL base</span>
+                          <input
+                            value={favoriteBaseEndpointDraft.baseUrl}
+                            onChange={(event) => setFavoriteBaseEndpointDraft((current) => ({ ...current, baseUrl: normalizeFavoriteBaseEndpoint(event.target.value) }))}
+                            placeholder="https://api.tu-servicio.com"
+                          />
+                        </label>
+                        <label className="field stretch-full">
+                          <span>Descripcion</span>
+                          <input
+                            value={favoriteBaseEndpointDraft.description}
+                            onChange={(event) => setFavoriteBaseEndpointDraft((current) => ({ ...current, description: event.target.value }))}
+                            placeholder="Aplica a GET y POST"
+                          />
+                        </label>
+                        <label className="field compact-field">
+                          <span>Entorno</span>
+                          <select
+                            value={favoriteBaseEndpointDraft.environment}
+                            onChange={(event) => setFavoriteBaseEndpointDraft((current) => ({ ...current, environment: event.target.value as FavoriteEnvironment }))}
+                          >
+                            <option value="DEV">DEV</option>
+                            <option value="PROD">PROD</option>
+                            <option value="QA">QA</option>
+                          </select>
+                        </label>
+                      </div>
+                      <div className="action-row">
+                        <button type="button" className="primary-button" onClick={saveFavoriteBaseEndpointDraft}>
+                          Guardar endpoint base
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={() => {
+                            setFavoriteBaseEndpointDraft({
+                              name: '',
+                              baseUrl: '',
+                              description: '',
+                              environment: favoriteEnvironment,
+                            });
+                            setShowFavoriteBaseCreateForm(false);
+                          }}
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="favorites-create-dropdown">
+                  <button
+                    type="button"
+                    className="ghost-button favorites-create-toggle"
+                    onClick={() => setShowFavoriteCommandCreateForm((current) => !current)}
+                    aria-expanded={showFavoriteCommandCreateForm}
+                  >
+                    <span className={`menu-arrow ${showFavoriteCommandCreateForm ? 'open' : ''}`}>▶</span>
+                    Añadir comando manualmente
+                  </button>
+                  {showFavoriteCommandCreateForm ? (
+                    <div className="favorites-create-panel">
+                      <div className="favorites-create-grid">
+                        <label className="field compact-field">
+                          <span>Nombre</span>
+                          <input
+                            value={favoriteCommandDraft.name}
+                            onChange={(event) => setFavoriteCommandDraft((current) => ({ ...current, name: event.target.value }))}
+                            placeholder="listar pedidos"
+                          />
+                        </label>
+                        <label className="field compact-field">
+                          <span>Comando</span>
+                          <input
+                            value={favoriteCommandDraft.command}
+                            onChange={(event) => setFavoriteCommandDraft((current) => ({ ...current, command: normalizeFavoriteCommand(event.target.value) }))}
+                            placeholder="/v2/example"
+                          />
+                        </label>
+                        <label className="field stretch-full">
+                          <span>Descripcion</span>
+                          <input
+                            value={favoriteCommandDraft.description}
+                            onChange={(event) => setFavoriteCommandDraft((current) => ({ ...current, description: event.target.value }))}
+                            placeholder="GET para pruebas de ejemplo"
+                          />
+                        </label>
+                        <label className="field compact-field">
+                          <span>Metodo</span>
+                          <select
+                            value={favoriteCommandDraft.method}
+                            onChange={(event) => setFavoriteCommandDraft((current) => ({ ...current, method: event.target.value as HttpMethod }))}
+                          >
+                            <option value="GET">GET</option>
+                            <option value="POST">POST</option>
+                          </select>
+                        </label>
+                        <label className="field compact-field">
+                          <span>Entorno</span>
+                          <select
+                            value={favoriteCommandDraft.environment}
+                            onChange={(event) => setFavoriteCommandDraft((current) => ({ ...current, environment: event.target.value as FavoriteEnvironment }))}
+                          >
+                            <option value="DEV">DEV</option>
+                            <option value="PROD">PROD</option>
+                            <option value="QA">QA</option>
+                          </select>
+                        </label>
+                        {favoriteCommandDraft.method === 'POST' ? (
+                          <label className="field stretch-full">
+                            <span>RAW por defecto</span>
+                            <textarea
+                              value={favoriteCommandDraft.defaultRawBody}
+                              onChange={(event) => setFavoriteCommandDraft((current) => ({ ...current, defaultRawBody: event.target.value }))}
+                              rows={4}
+                              spellCheck={false}
+                              placeholder="RAW inicial para este comando POST"
+                            />
+                          </label>
+                        ) : null}
+                        <label className="field stretch-full">
+                          <span>Script post-respuesta inicial</span>
+                          <textarea
+                            value={favoriteCommandDraft.postResponseScript}
+                            onChange={(event) => setFavoriteCommandDraft((current) => ({ ...current, postResponseScript: event.target.value }))}
+                            rows={4}
+                            spellCheck={false}
+                            placeholder="return { title: 'custom-table-view', rows: [] };"
+                          />
+                        </label>
+                      </div>
+                      <div className="action-row">
+                        <button type="button" className="primary-button" onClick={saveFavoriteCommandDraft}>
+                          Guardar comando
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={() => {
+                            setFavoriteCommandDraft({
+                              name: '',
+                              command: '',
+                              description: '',
+                              environment: favoriteEnvironment,
+                              method,
+                              defaultRawBody: '',
+                              postResponseScript: '',
+                            });
+                            setShowFavoriteCommandCreateForm(false);
+                          }}
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
             </section>
 
             <section className="panel split-layout">
@@ -6455,6 +7021,7 @@ function App() {
                   <h2>Endpoints base favoritos</h2>
                   <span>{contextualFavoriteBaseEndpoints.length}</span>
                 </div>
+                <p className="muted-small">Los endpoints base se comparten entre GET y POST en el constructor.</p>
                 {contextualFavoriteBaseEndpoints.length === 0 ? (
                   <p className="muted">No hay endpoints base favoritos para este entorno.</p>
                 ) : (
@@ -6474,6 +7041,52 @@ function App() {
                             onChange={(event) => setFavoriteBaseEndpoints((current) => current.map((candidate) => (candidate.id === entry.id ? { ...candidate, baseUrl: normalizeFavoriteBaseEndpoint(event.target.value) } : candidate)))}
                             aria-label={`Endpoint base favorito ${entry.baseUrl}`}
                           />
+                          {editingFavoriteBaseDescriptionId === entry.id ? (
+                            <label className="field favorite-inline-description-editor">
+                              <span className="visually-hidden">Descripcion del endpoint base favorito</span>
+                              <textarea
+                                value={favoriteBaseDescriptionDraft}
+                                onChange={(event) => updateFavoriteBaseEndpointDescription(entry.id, event.target.value)}
+                                onBlur={() => {
+                                  if (skipBaseDescriptionBlurRef.current) {
+                                    skipBaseDescriptionBlurRef.current = false;
+                                    return;
+                                  }
+                                  clampFavoriteBaseEndpointDescription(entry.id);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Escape') {
+                                    event.preventDefault();
+                                    skipBaseDescriptionBlurRef.current = true;
+                                    cancelFavoriteBaseEndpointDescriptionEdit(entry.id);
+                                    return;
+                                  }
+
+                                  if (event.key === 'Enter' && !event.shiftKey) {
+                                    event.preventDefault();
+                                    clampFavoriteBaseEndpointDescription(entry.id);
+                                  }
+                                }}
+                                rows={2}
+                                placeholder="Descripcion para agrupar REST"
+                                aria-label={`Descripcion del endpoint base favorito ${entry.baseUrl}`}
+                                autoFocus
+                              />
+                              {renderDescriptionCounter(favoriteBaseDescriptionDraft)}
+                            </label>
+                          ) : (
+                            <button
+                              type="button"
+                              className="favorite-description-inline-button"
+                              onDoubleClick={() => {
+                                setEditingFavoriteBaseDescriptionId(entry.id);
+                                setFavoriteBaseDescriptionDraft(entry.description);
+                              }}
+                              title={entry.description || 'Anadir descripcion (doble clic para editar)'}
+                            >
+                              {entry.description || 'Anadir descripcion (doble clic para editar)'}
+                            </button>
+                          )}
                         </div>
                         <div className="action-row">
                           <button type="button" className="secondary-button" onClick={() => setBaseEndpoint(entry.baseUrl)}>
@@ -6516,6 +7129,52 @@ function App() {
                               onChange={(event) => setFavoriteCommands((current) => current.map((candidate) => (candidate.id === entry.id ? { ...candidate, command: normalizeFavoriteCommand(event.target.value) } : candidate)))}
                               aria-label={`Comando favorito ${entry.command}`}
                             />
+                            {editingFavoriteCommandDescriptionId === entry.id ? (
+                              <label className="field favorite-inline-description-editor">
+                                <span className="visually-hidden">Descripcion del comando favorito</span>
+                                <textarea
+                                  value={favoriteCommandDescriptionDraft}
+                                  onChange={(event) => updateFavoriteCommandDescription(entry.id, event.target.value)}
+                                  onBlur={() => {
+                                    if (skipCommandDescriptionBlurRef.current) {
+                                      skipCommandDescriptionBlurRef.current = false;
+                                      return;
+                                    }
+                                    clampFavoriteCommandDescription(entry.id);
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Escape') {
+                                      event.preventDefault();
+                                      skipCommandDescriptionBlurRef.current = true;
+                                      cancelFavoriteCommandDescriptionEdit(entry.id);
+                                      return;
+                                    }
+
+                                    if (event.key === 'Enter' && !event.shiftKey) {
+                                      event.preventDefault();
+                                      clampFavoriteCommandDescription(entry.id);
+                                    }
+                                  }}
+                                  rows={2}
+                                  placeholder="Descripcion para agrupar REST"
+                                  aria-label={`Descripcion del comando favorito ${entry.command}`}
+                                  autoFocus
+                                />
+                                {renderDescriptionCounter(favoriteCommandDescriptionDraft)}
+                              </label>
+                            ) : (
+                              <button
+                                type="button"
+                                className="favorite-description-inline-button"
+                                onDoubleClick={() => {
+                                  setEditingFavoriteCommandDescriptionId(entry.id);
+                                  setFavoriteCommandDescriptionDraft(entry.description);
+                                }}
+                                title={entry.description || 'Anadir descripcion (doble clic para editar)'}
+                              >
+                                {entry.description || 'Anadir descripcion (doble clic para editar)'}
+                              </button>
+                            )}
                           </div>
 
                           {entry.method === 'POST' ? (

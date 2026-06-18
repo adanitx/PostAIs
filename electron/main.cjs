@@ -13,17 +13,47 @@ const isDev = !app.isPackaged;
 const diagnosticsEnabled = process.env.POSTAIS_DIAGNOSTIC === '1';
 const secretStore = new Map();
 const userDataRoot = path.join(app.getPath('appData'), 'PostAIs');
-const runtimeRoot = path.join(app.getPath('temp'), 'PostAIs-runtime');
-const sessionDataDir = path.join(runtimeRoot, 'session');
-const cacheDir = path.join(runtimeRoot, 'cache');
+const cacheRoot = path.join(userDataRoot, 'cache');
+const legacyRuntimeRoot = path.join(app.getPath('temp'), 'PostAIs-runtime');
+const legacySessionDataDir = path.join(legacyRuntimeRoot, 'session');
+const legacyCacheDir = path.join(legacyRuntimeRoot, 'cache');
+const sessionDataDir = path.join(userDataRoot, 'session');
+const cacheDir = path.join(cacheRoot, 'chromium');
 const localSecretsFilePath = path.join(userDataRoot, 'secrets.local.json');
 
 fs.mkdirSync(userDataRoot, { recursive: true });
 fs.mkdirSync(sessionDataDir, { recursive: true });
+fs.mkdirSync(cacheRoot, { recursive: true });
 fs.mkdirSync(cacheDir, { recursive: true });
+
+// Migrate Chromium session storage from old temp location to persistent data.
+if (fs.existsSync(legacySessionDataDir) && fs.existsSync(sessionDataDir)) {
+  const hasPersistentData = fs.readdirSync(sessionDataDir).length > 0;
+
+  if (!hasPersistentData) {
+    try {
+      fs.cpSync(legacySessionDataDir, sessionDataDir, { recursive: true, force: true });
+    } catch (error) {
+      console.error('[postais] no se pudo migrar sessionData legado', error instanceof Error ? error.message : error);
+    }
+  }
+}
+
+if (fs.existsSync(legacyCacheDir) && fs.existsSync(cacheDir)) {
+  const hasPersistentCache = fs.readdirSync(cacheDir).length > 0;
+
+  if (!hasPersistentCache) {
+    try {
+      fs.cpSync(legacyCacheDir, cacheDir, { recursive: true, force: true });
+    } catch (error) {
+      console.error('[postais] no se pudo migrar cache legado', error instanceof Error ? error.message : error);
+    }
+  }
+}
 
 app.setPath('userData', userDataRoot);
 app.setPath('sessionData', sessionDataDir);
+app.setPath('cache', cacheDir);
 app.commandLine.appendSwitch('disk-cache-dir', cacheDir);
 
 function isValidSecretKey(value) {
