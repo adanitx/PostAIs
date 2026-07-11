@@ -141,13 +141,22 @@ interface SampleScriptDialogState {
   context: PostResponseScriptContext;
 }
 
+interface EndpointParamRelationDraft {
+  id: string;
+  sourceToken: string;
+  targetToken: string;
+}
+
 interface EndpointParamGroupDialogState {
   tupleIndex: number;
   tupleId: string;
   endpoint: string;
   tokens: string[];
+  mode: 'single' | 'relations';
   selectedToken: string;
   blockText: string;
+  tokenBlocks: Record<string, string>;
+  relations: EndpointParamRelationDraft[];
 }
 
 interface PostmanHeader {
@@ -824,6 +833,97 @@ function parseParameterGroupBlock(blockText: string): string[] {
   });
 
   return unique;
+}
+
+function buildEndpointParamAssignmentsFromRelations(
+  tokens: string[],
+  relations: EndpointParamRelationDraft[],
+  tokenValuesByToken: Record<string, string[]>,
+): { ok: true; assignments: Array<Record<string, string>> } | { ok: false; message: string } {
+  if (relations.length === 0) {
+    return { ok: false, message: 'Anade al menos una relacion de parametros para generar tuplas.' };
+  }
+
+  let assignments: Array<Record<string, string>> = [{}];
+  const relatedTokens = new Set<string>();
+
+  for (const relation of relations) {
+    if (relation.sourceToken === relation.targetToken) {
+      return {
+        ok: false,
+        message: `La relacion {{${relation.sourceToken}}} -> {{${relation.targetToken}}} no es valida: origen y destino son iguales.`,
+      };
+    }
+
+    const sourceValues = tokenValuesByToken[relation.sourceToken] ?? [];
+    const targetValues = tokenValuesByToken[relation.targetToken] ?? [];
+
+    if (sourceValues.length === 0) {
+      return { ok: false, message: `Faltan valores para {{${relation.sourceToken}}}.` };
+    }
+
+    if (targetValues.length === 0) {
+      return { ok: false, message: `Faltan valores para {{${relation.targetToken}}}.` };
+    }
+
+    relatedTokens.add(relation.sourceToken);
+    relatedTokens.add(relation.targetToken);
+
+    const next: Array<Record<string, string>> = [];
+    assignments.forEach((assignment) => {
+      sourceValues.forEach((sourceValue) => {
+        targetValues.forEach((targetValue) => {
+          next.push({
+            ...assignment,
+            [relation.sourceToken]: sourceValue,
+            [relation.targetToken]: targetValue,
+          });
+        });
+      });
+    });
+
+    assignments = next;
+  }
+
+  // Si el usuario tambien cargo valores para tokens fuera de relaciones,
+  // se combinan como ejes adicionales para no perderlos.
+  tokens.forEach((token) => {
+    if (relatedTokens.has(token)) {
+      return;
+    }
+
+    const values = tokenValuesByToken[token] ?? [];
+    if (values.length === 0) {
+      return;
+    }
+
+    const next: Array<Record<string, string>> = [];
+    assignments.forEach((assignment) => {
+      values.forEach((value) => {
+        next.push({
+          ...assignment,
+          [token]: value,
+        });
+      });
+    });
+    assignments = next;
+  });
+
+  const seen = new Set<string>();
+  const deduped = assignments.filter((assignment) => {
+    const key = tokens.map((token) => `${token}=${assignment[token] ?? ''}`).join('|');
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+
+  if (deduped.length === 0) {
+    return { ok: false, message: 'No se pudieron construir combinaciones de parametros con la configuracion actual.' };
+  }
+
+  return { ok: true, assignments: deduped };
 }
 
 function createDefaultFavoriteBaseEndpointName(baseUrl: string): string {
@@ -2721,7 +2821,7 @@ function App() {
       }
     } else {
       // Use the composer draft as the RAW source so existing tuples are never overwritten
-      const currentRawBody = composerDraftRawBody ?? '';
+      const currentRawBody = composerDraftRawBody ?? (selectedPostEndpointTupleId ? resolveRawBodyForPostTuple(selectedPostEndpointTupleId) : rawBodyText);
       const hasOnlyBlankTuple = postEndpointTuples.length === 1 && postEndpointTuples[0].trim() === '';
       const baseIndex = mode === 'replace'
         ? 0
@@ -3349,8 +3449,13 @@ function App() {
       tupleId,
       endpoint: tupleEndpoint,
       tokens: templateTokens,
+      mode: templateTokens.length >= 2 ? 'relations' : 'single',
       selectedToken: templateTokens[0],
       blockText: '',
+      tokenBlocks: Object.fromEntries(templateTokens.map((token) => [token, ''])),
+      relations: templateTokens.length >= 2
+        ? [{ id: createHistoryId(), sourceToken: templateTokens[0], targetToken: templateTokens[1] }]
+        : [],
     });
   }
 
@@ -3363,10 +3468,31 @@ function App() {
       return;
     }
 
-    const groupedValues = parseParameterGroupBlock(endpointParamGroupDialog.blockText);
-    if (groupedValues.length === 0) {
-      setStatusMessage('El bloque no contiene valores validos para generar tuplas.');
-      return;
+    let groupedValues: string[] = [];
+    let assignments: Array<Record<string, string>> = [];
+
+    if (endpointParamGroupDialog.mode === 'relations' && endpointParamGroupDialog.tokens.length >= 2) {
+      const tokenValuesByToken = Object.fromEntries(
+        endpointParamGroupDialog.tokens.map((token) => [token, parseParameterGroupBlock(endpointParamGroupDialog.tokenBlocks[token] ?? '')]),
+      );
+      const relationResult = buildEndpointParamAssignmentsFromRelations(
+        endpointParamGroupDialog.tokens,
+        endpointParamGroupDialog.relations,
+        tokenValuesByToken,
+      );
+
+      if (!relationResult.ok) {
+        setStatusMessage(relationResult.message);
+        return;
+      }
+
+      assignments = relationResult.assignments;
+    } else {
+      groupedValues = parseParameterGroupBlock(endpointParamGroupDialog.blockText);
+      if (groupedValues.length === 0) {
+        setStatusMessage('El bloque no contiene valores validos para generar tuplas.');
+        return;
+      }
     }
 
     const sourceIndex = endpointParamGroupDialog.tupleIndex;
@@ -3381,10 +3507,15 @@ function App() {
 
     const sourceRaw = resolveRawBodyForPostTuple(sourceTupleId);
     const sourceParams = endpointRuntimeParamsByTupleId[sourceTupleId] ?? pathParamValues[sourceEndpoint] ?? {};
-    const sourceTokenValue = (sourceParams[endpointParamGroupDialog.selectedToken] ?? '').trim();
-    const shouldDropSourceTuple = sourceTokenValue === '';
-    const newTupleIds = groupedValues.map(() => createHistoryId());
-    const newEndpoints = groupedValues.map(() => sourceEndpoint);
+    const involvedTokens = endpointParamGroupDialog.mode === 'relations' && endpointParamGroupDialog.tokens.length >= 2
+      ? Array.from(new Set(endpointParamGroupDialog.relations.flatMap((relation) => [relation.sourceToken, relation.targetToken])))
+      : [endpointParamGroupDialog.selectedToken];
+    const shouldDropSourceTuple = involvedTokens.every((token) => (sourceParams[token] ?? '').trim() === '');
+    const generationCount = endpointParamGroupDialog.mode === 'relations' && endpointParamGroupDialog.tokens.length >= 2
+      ? assignments.length
+      : groupedValues.length;
+    const newTupleIds = Array.from({ length: generationCount }, () => createHistoryId());
+    const newEndpoints = Array.from({ length: generationCount }, () => sourceEndpoint);
 
     setPostEndpointTuples((current) => {
       if (shouldDropSourceTuple) {
@@ -3424,10 +3555,17 @@ function App() {
       }
 
       newTupleIds.forEach((tupleId, valueIndex) => {
-        next[tupleId] = {
-          ...sourceParams,
-          [endpointParamGroupDialog.selectedToken]: groupedValues[valueIndex],
-        };
+        const relationAssignment = assignments[valueIndex] ?? {};
+        const nextParams = endpointParamGroupDialog.mode === 'relations' && endpointParamGroupDialog.tokens.length >= 2
+          ? {
+            ...sourceParams,
+            ...relationAssignment,
+          }
+          : {
+            ...sourceParams,
+            [endpointParamGroupDialog.selectedToken]: groupedValues[valueIndex],
+          };
+        next[tupleId] = nextParams;
       });
 
       return next;
@@ -3437,7 +3575,11 @@ function App() {
     setSelectedPostEndpointIndex(nextSelectedIndex);
     setFocusedPostEndpointIndex(nextSelectedIndex);
 
-    setStatusMessage(`Se generaron ${groupedValues.length} tuplas para {{${endpointParamGroupDialog.selectedToken}}}.${shouldDropSourceTuple ? ' Se elimino la tupla origen incompleta.' : ''}`);
+    if (endpointParamGroupDialog.mode === 'relations' && endpointParamGroupDialog.tokens.length >= 2) {
+      setStatusMessage(`Se generaron ${generationCount} tuplas con ${endpointParamGroupDialog.relations.length} relacion(es) de parametros.${shouldDropSourceTuple ? ' Se elimino la tupla origen incompleta.' : ''}`);
+    } else {
+      setStatusMessage(`Se generaron ${groupedValues.length} tuplas para {{${endpointParamGroupDialog.selectedToken}}}.${shouldDropSourceTuple ? ' Se elimino la tupla origen incompleta.' : ''}`);
+    }
     closeEndpointParamGroupDialog();
   }
 
@@ -7477,51 +7619,232 @@ function App() {
               <p>
                 Pega una lista (una linea por valor). Se creara una nueva tupla por cada valor para el mismo endpoint/comando.
               </p>
-              <label className="field">
-                <span>Parametro objetivo</span>
-                <select
-                  value={endpointParamGroupDialog.selectedToken}
-                  onChange={(event) => {
-                    const token = event.target.value;
-                    setEndpointParamGroupDialog((current) => {
-                      if (!current) {
-                        return current;
-                      }
+              {endpointParamGroupDialog.tokens.length >= 2 ? (
+                <label className="field">
+                  <span>Modo de generacion</span>
+                  <select
+                    value={endpointParamGroupDialog.mode}
+                    onChange={(event) => {
+                      const mode = event.target.value as 'single' | 'relations';
+                      setEndpointParamGroupDialog((current) => {
+                        if (!current) {
+                          return current;
+                        }
 
-                      return {
-                        ...current,
-                        selectedToken: token,
-                      };
-                    });
-                  }}
-                >
-                  {endpointParamGroupDialog.tokens.map((token) => (
-                    <option key={`endpoint-param-group-token-${token}`} value={token}>{`{{${token}}}`}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">
-                <span>Bloque de valores</span>
-                <textarea
-                  rows={8}
-                  value={endpointParamGroupDialog.blockText}
-                  onChange={(event) => {
-                    const nextText = event.target.value;
-                    setEndpointParamGroupDialog((current) => {
-                      if (!current) {
-                        return current;
-                      }
+                        return {
+                          ...current,
+                          mode,
+                        };
+                      });
+                    }}
+                  >
+                    <option value="single">Bloque simple (1 parametro)</option>
+                    <option value="relations">Relacion parametros (producto cartesiano)</option>
+                  </select>
+                </label>
+              ) : null}
 
-                      return {
-                        ...current,
-                        blockText: nextText,
-                      };
-                    });
-                  }}
-                  placeholder={'201619339415213110226020\n200218039422587040226021\n...'}
-                  autoFocus
-                />
-              </label>
+              {endpointParamGroupDialog.mode === 'relations' && endpointParamGroupDialog.tokens.length >= 2 ? (
+                <>
+                  <p className="muted-small">
+                    {`Define valores por parametro y crea una o varias relaciones. Ejemplo: por cada {{${endpointParamGroupDialog.tokens[0] ?? 'param1'}}} combinar con todos los valores de {{${endpointParamGroupDialog.tokens[1] ?? 'param2'}}}.`}
+                  </p>
+
+                  <div className="endpoint-param-relations-list">
+                    {endpointParamGroupDialog.relations.map((relation, relationIndex) => (
+                      <div key={relation.id} className="endpoint-param-relation-row">
+                        <label className="field endpoint-param-relation-field">
+                          <span>Por cada</span>
+                          <select
+                            value={relation.sourceToken}
+                            onChange={(event) => {
+                              const nextSource = event.target.value;
+                              setEndpointParamGroupDialog((current) => {
+                                if (!current) {
+                                  return current;
+                                }
+
+                                return {
+                                  ...current,
+                                  relations: current.relations.map((item) => (
+                                    item.id === relation.id ? { ...item, sourceToken: nextSource } : item
+                                  )),
+                                };
+                              });
+                            }}
+                          >
+                            {endpointParamGroupDialog.tokens.map((token) => (
+                              <option key={`relation-source-${relation.id}-${token}`} value={token}>{`{{${token}}}`}</option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="field endpoint-param-relation-field">
+                          <span>Combinar con</span>
+                          <select
+                            value={relation.targetToken}
+                            onChange={(event) => {
+                              const nextTarget = event.target.value;
+                              setEndpointParamGroupDialog((current) => {
+                                if (!current) {
+                                  return current;
+                                }
+
+                                return {
+                                  ...current,
+                                  relations: current.relations.map((item) => (
+                                    item.id === relation.id ? { ...item, targetToken: nextTarget } : item
+                                  )),
+                                };
+                              });
+                            }}
+                          >
+                            {endpointParamGroupDialog.tokens.map((token) => (
+                              <option key={`relation-target-${relation.id}-${token}`} value={token}>{`{{${token}}}`}</option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <button
+                          type="button"
+                          className="ghost-button endpoint-param-relation-delete"
+                          onClick={() => {
+                            setEndpointParamGroupDialog((current) => {
+                              if (!current) {
+                                return current;
+                              }
+
+                              if (current.relations.length <= 1) {
+                                return current;
+                              }
+
+                              return {
+                                ...current,
+                                relations: current.relations.filter((item) => item.id !== relation.id),
+                              };
+                            });
+                          }}
+                          disabled={endpointParamGroupDialog.relations.length <= 1}
+                          title="Eliminar relacion"
+                          aria-label="Eliminar relacion"
+                        >
+                          Eliminar
+                        </button>
+
+                        {relationIndex === endpointParamGroupDialog.relations.length - 1 ? (
+                          <button
+                            type="button"
+                            className="secondary-button endpoint-param-relation-add"
+                            onClick={() => {
+                              setEndpointParamGroupDialog((current) => {
+                                if (!current) {
+                                  return current;
+                                }
+
+                                const sourceToken = current.tokens[0] ?? '';
+                                const targetToken = current.tokens[1] ?? current.tokens[0] ?? '';
+                                if (!sourceToken || !targetToken) {
+                                  return current;
+                                }
+
+                                return {
+                                  ...current,
+                                  relations: [...current.relations, {
+                                    id: createHistoryId(),
+                                    sourceToken,
+                                    targetToken,
+                                  }],
+                                };
+                              });
+                            }}
+                            title="Anadir relacion"
+                            aria-label="Anadir relacion"
+                          >
+                            +
+                          </button>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="endpoint-param-token-blocks-grid">
+                    {endpointParamGroupDialog.tokens.map((token) => (
+                      <label key={`endpoint-token-block-${token}`} className="field">
+                        <span>{`Valores para {{${token}}}`}</span>
+                        <textarea
+                          rows={6}
+                          value={endpointParamGroupDialog.tokenBlocks[token] ?? ''}
+                          onChange={(event) => {
+                            const nextText = event.target.value;
+                            setEndpointParamGroupDialog((current) => {
+                              if (!current) {
+                                return current;
+                              }
+
+                              return {
+                                ...current,
+                                tokenBlocks: {
+                                  ...current.tokenBlocks,
+                                  [token]: nextText,
+                                },
+                              };
+                            });
+                          }}
+                          placeholder={'valor-1\nvalor-2\nvalor-3'}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <label className="field">
+                    <span>Parametro objetivo</span>
+                    <select
+                      value={endpointParamGroupDialog.selectedToken}
+                      onChange={(event) => {
+                        const token = event.target.value;
+                        setEndpointParamGroupDialog((current) => {
+                          if (!current) {
+                            return current;
+                          }
+
+                          return {
+                            ...current,
+                            selectedToken: token,
+                          };
+                        });
+                      }}
+                    >
+                      {endpointParamGroupDialog.tokens.map((token) => (
+                        <option key={`endpoint-param-group-token-${token}`} value={token}>{`{{${token}}}`}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Bloque de valores</span>
+                    <textarea
+                      rows={8}
+                      value={endpointParamGroupDialog.blockText}
+                      onChange={(event) => {
+                        const nextText = event.target.value;
+                        setEndpointParamGroupDialog((current) => {
+                          if (!current) {
+                            return current;
+                          }
+
+                          return {
+                            ...current,
+                            blockText: nextText,
+                          };
+                        });
+                      }}
+                      placeholder={'201619339415213110226020\n200218039422587040226021\n...'}
+                      autoFocus
+                    />
+                  </label>
+                </>
+              )}
               <div className="action-row confirm-actions">
                 <button type="button" className="ghost-button" onClick={closeEndpointParamGroupDialog}>
                   Cancelar

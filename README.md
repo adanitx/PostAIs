@@ -2,6 +2,15 @@
 
 Aplicacion de escritorio basada en Electron + React para enviar lotes HTTP desde un CSV. Ahora soporta GET y POST, query params por plantilla, variables privadas de autenticacion y detalle completo de errores por fila.
 
+## Novedades recientes (v1.3.1)
+
+- Constructor de endpoints con relaciones de parametros para placeholders multiples.
+- Nuevo modo Relacion parametros en Anadir grupo de parametros para generar combinaciones por producto cartesiano.
+- Soporte de multiples relaciones con opcion de anadir (+) y eliminar por cada relacion.
+- Bloques de valores separados por token para controlar combinaciones complejas por endpoint.
+- Correccion de persistencia en Body RAW manual al sustituir endpoint(s) sin guardar en favoritos.
+- Mejora visual de coincidencias en el constructor para evitar contenido cortado y mejorar lectura.
+
 ## Flujo principal
 
 1. Importar un CSV con cabeceras.

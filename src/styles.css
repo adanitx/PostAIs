@@ -479,6 +479,10 @@ pre {
   grid-column: 1 / -1;
 }
 
+.grid-panel-wide .endpoint-composer-panel {
+  grid-column: 1 / -1;
+}
+
 .endpoint-composer-panel {
   grid-column: 1 / -1;
   border: 1px dashed color-mix(in srgb, var(--midnight) 44%, var(--line) 56%);
@@ -1629,6 +1633,42 @@ pre {
   gap: 0.55rem;
 }
 
+.endpoint-param-relations-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.endpoint-param-relation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: 0.55rem;
+  padding: 0.55rem;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-subtle) 75%, transparent 25%);
+}
+
+.endpoint-param-relation-field {
+  margin: 0;
+}
+
+.endpoint-param-relation-delete,
+.endpoint-param-relation-add {
+  min-width: 2.5rem;
+  padding-inline: 0.75rem;
+}
+
+.endpoint-param-token-blocks-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.endpoint-param-token-blocks-grid textarea {
+  min-height: 7rem;
+}
+
 .history-card .muted-small,
 .preview-panel .muted-small,
 .results-panel .muted-small {
@@ -1753,6 +1793,11 @@ pre {
 
   .row-card {
     min-width: 260px;
+  }
+
+  .endpoint-param-relation-row,
+  .endpoint-param-token-blocks-grid {
+    grid-template-columns: 1fr;
   }
 }
 
