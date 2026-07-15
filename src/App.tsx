@@ -148,6 +148,7 @@ interface EndpointParamRelationDraft {
 }
 
 interface EndpointParamGroupDialogState {
+  targetMethod: 'GET' | 'POST';
   tupleIndex: number;
   tupleId: string;
   endpoint: string;
@@ -1887,6 +1888,7 @@ function App() {
   const [postEndpointTuples, setPostEndpointTuples] = useState<string[]>(['https://httpbin.org/anything']);
   const [selectedPostEndpointIndex, setSelectedPostEndpointIndex] = useState(0);
   const [postEndpointTupleIds, setPostEndpointTupleIds] = useState<string[]>([createHistoryId()]);
+  const [getEndpointTupleIds, setGetEndpointTupleIds] = useState<string[]>([createHistoryId()]);
   const [headersText, setHeadersText] = useState(defaultHeaders);
   const [queryText, setQueryText] = useState(defaultQuery);
   const [bodyTemplateText, setBodyTemplateText] = useState(defaultBodyTemplate);
@@ -3445,6 +3447,7 @@ function App() {
     }
 
     setEndpointParamGroupDialog({
+      targetMethod: 'POST',
       tupleIndex: index,
       tupleId,
       endpoint: tupleEndpoint,
@@ -3461,6 +3464,39 @@ function App() {
 
   function closeEndpointParamGroupDialog() {
     setEndpointParamGroupDialog(null);
+  }
+
+  function openGetEndpointParamGroupDialog(index: number) {
+    const tupleEndpoint = getEndpointTuples[index] ?? '';
+    const tupleId = getEndpointTupleIds[index] ?? '';
+    const templateTokens = extractEndpointRuntimeParams(tupleEndpoint)
+      .filter((param) => param.kind === 'template')
+      .map((param) => param.name);
+
+    if (!tupleEndpoint.trim() || !tupleId) {
+      setStatusMessage('No se pudo abrir el grupo de parametros: tupla GET no valida.');
+      return;
+    }
+
+    if (templateTokens.length === 0) {
+      setStatusMessage('Esta tupla no tiene placeholders {{token}} para agrupar parametros.');
+      return;
+    }
+
+    setEndpointParamGroupDialog({
+      targetMethod: 'GET',
+      tupleIndex: index,
+      tupleId,
+      endpoint: tupleEndpoint,
+      tokens: templateTokens,
+      mode: templateTokens.length >= 2 ? 'relations' : 'single',
+      selectedToken: templateTokens[0],
+      blockText: '',
+      tokenBlocks: Object.fromEntries(templateTokens.map((token) => [token, ''])),
+      relations: templateTokens.length >= 2
+        ? [{ id: createHistoryId(), sourceToken: templateTokens[0], targetToken: templateTokens[1] }]
+        : [],
+    });
   }
 
   function applyEndpointParamGroupDialog() {
@@ -3496,8 +3532,12 @@ function App() {
     }
 
     const sourceIndex = endpointParamGroupDialog.tupleIndex;
-    const sourceEndpoint = postEndpointTuples[sourceIndex] ?? '';
-    const sourceTupleId = postEndpointTupleIds[sourceIndex] ?? '';
+    const sourceEndpoint = endpointParamGroupDialog.targetMethod === 'GET'
+      ? (getEndpointTuples[sourceIndex] ?? '')
+      : (postEndpointTuples[sourceIndex] ?? '');
+    const sourceTupleId = endpointParamGroupDialog.targetMethod === 'GET'
+      ? (getEndpointTupleIds[sourceIndex] ?? '')
+      : (postEndpointTupleIds[sourceIndex] ?? '');
 
     if (!sourceEndpoint || !sourceTupleId) {
       setStatusMessage('La tupla origen ya no esta disponible.');
@@ -3505,7 +3545,6 @@ function App() {
       return;
     }
 
-    const sourceRaw = resolveRawBodyForPostTuple(sourceTupleId);
     const sourceParams = endpointRuntimeParamsByTupleId[sourceTupleId] ?? pathParamValues[sourceEndpoint] ?? {};
     const involvedTokens = endpointParamGroupDialog.mode === 'relations' && endpointParamGroupDialog.tokens.length >= 2
       ? Array.from(new Set(endpointParamGroupDialog.relations.flatMap((relation) => [relation.sourceToken, relation.targetToken])))
@@ -3517,63 +3556,99 @@ function App() {
     const newTupleIds = Array.from({ length: generationCount }, () => createHistoryId());
     const newEndpoints = Array.from({ length: generationCount }, () => sourceEndpoint);
 
-    setPostEndpointTuples((current) => {
-      if (shouldDropSourceTuple) {
-        return [...current.filter((_, idx) => idx !== sourceIndex), ...newEndpoints];
-      }
+    if (endpointParamGroupDialog.targetMethod === 'GET') {
+      setGetEndpointTuples((current) => {
+        if (shouldDropSourceTuple) {
+          return [...current.filter((_, idx) => idx !== sourceIndex), ...newEndpoints];
+        }
 
-      return [...current, ...newEndpoints];
-    });
-
-    setPostEndpointTupleIds((current) => {
-      if (shouldDropSourceTuple) {
-        return [...current.filter((_, idx) => idx !== sourceIndex), ...newTupleIds];
-      }
-
-      return [...current, ...newTupleIds];
-    });
-
-    setEndpointRawBodiesByTupleId((prev) => {
-      const next = { ...prev };
-
-      if (shouldDropSourceTuple) {
-        delete next[sourceTupleId];
-      }
-
-      newTupleIds.forEach((tupleId) => {
-        next[tupleId] = sourceRaw;
+        return [...current, ...newEndpoints];
       });
 
-      return next;
-    });
+      setGetEndpointTupleIds((current) => {
+        if (shouldDropSourceTuple) {
+          return [...current.filter((_, idx) => idx !== sourceIndex), ...newTupleIds];
+        }
 
-    setEndpointRuntimeParamsByTupleId((prev) => {
-      const next = { ...prev };
-
-      if (shouldDropSourceTuple) {
-        delete next[sourceTupleId];
-      }
-
-      newTupleIds.forEach((tupleId, valueIndex) => {
-        const relationAssignment = assignments[valueIndex] ?? {};
-        const nextParams = endpointParamGroupDialog.mode === 'relations' && endpointParamGroupDialog.tokens.length >= 2
-          ? {
-            ...sourceParams,
-            ...relationAssignment,
-          }
-          : {
-            ...sourceParams,
-            [endpointParamGroupDialog.selectedToken]: groupedValues[valueIndex],
-          };
-        next[tupleId] = nextParams;
+        return [...current, ...newTupleIds];
       });
 
-      return next;
-    });
+      setEndpointRuntimeParamsByTupleId((prev) => {
+        const next = { ...prev };
 
-    const nextSelectedIndex = shouldDropSourceTuple ? Math.max(0, postEndpointTuples.length - 1) : postEndpointTuples.length;
-    setSelectedPostEndpointIndex(nextSelectedIndex);
-    setFocusedPostEndpointIndex(nextSelectedIndex);
+        if (shouldDropSourceTuple) {
+          delete next[sourceTupleId];
+        }
+
+        newTupleIds.forEach((tupleId, valueIndex) => {
+          const relationAssignment = assignments[valueIndex] ?? {};
+          const nextParams = endpointParamGroupDialog.mode === 'relations' && endpointParamGroupDialog.tokens.length >= 2
+            ? { ...sourceParams, ...relationAssignment }
+            : { ...sourceParams, [endpointParamGroupDialog.selectedToken]: groupedValues[valueIndex] };
+          next[tupleId] = nextParams;
+        });
+
+        return next;
+      });
+
+      const nextSelectedIndex = shouldDropSourceTuple ? Math.max(0, getEndpointTuples.length - 1) : getEndpointTuples.length;
+      setSelectedGetEndpointIndex(nextSelectedIndex);
+      setFocusedGetEndpointIndex(nextSelectedIndex);
+    } else {
+      const sourceRaw = resolveRawBodyForPostTuple(sourceTupleId);
+
+      setPostEndpointTuples((current) => {
+        if (shouldDropSourceTuple) {
+          return [...current.filter((_, idx) => idx !== sourceIndex), ...newEndpoints];
+        }
+
+        return [...current, ...newEndpoints];
+      });
+
+      setPostEndpointTupleIds((current) => {
+        if (shouldDropSourceTuple) {
+          return [...current.filter((_, idx) => idx !== sourceIndex), ...newTupleIds];
+        }
+
+        return [...current, ...newTupleIds];
+      });
+
+      setEndpointRawBodiesByTupleId((prev) => {
+        const next = { ...prev };
+
+        if (shouldDropSourceTuple) {
+          delete next[sourceTupleId];
+        }
+
+        newTupleIds.forEach((tupleId) => {
+          next[tupleId] = sourceRaw;
+        });
+
+        return next;
+      });
+
+      setEndpointRuntimeParamsByTupleId((prev) => {
+        const next = { ...prev };
+
+        if (shouldDropSourceTuple) {
+          delete next[sourceTupleId];
+        }
+
+        newTupleIds.forEach((tupleId, valueIndex) => {
+          const relationAssignment = assignments[valueIndex] ?? {};
+          const nextParams = endpointParamGroupDialog.mode === 'relations' && endpointParamGroupDialog.tokens.length >= 2
+            ? { ...sourceParams, ...relationAssignment }
+            : { ...sourceParams, [endpointParamGroupDialog.selectedToken]: groupedValues[valueIndex] };
+          next[tupleId] = nextParams;
+        });
+
+        return next;
+      });
+
+      const nextSelectedIndex = shouldDropSourceTuple ? Math.max(0, postEndpointTuples.length - 1) : postEndpointTuples.length;
+      setSelectedPostEndpointIndex(nextSelectedIndex);
+      setFocusedPostEndpointIndex(nextSelectedIndex);
+    }
 
     if (endpointParamGroupDialog.mode === 'relations' && endpointParamGroupDialog.tokens.length >= 2) {
       setStatusMessage(`Se generaron ${generationCount} tuplas con ${endpointParamGroupDialog.relations.length} relacion(es) de parametros.${shouldDropSourceTuple ? ' Se elimino la tupla origen incompleta.' : ''}`);
@@ -5439,15 +5514,17 @@ function App() {
     }
   }
 
-  async function dispatchGetTuples(targetEndpoints: string[]) {
+  async function dispatchGetTuples(targetEndpoints: string[], targetTupleIds?: string[]) {
     const postais = window.postais;
     if (!postais) {
       setStatusMessage('La API nativa no esta disponible. Ejecuta la app dentro de Electron.');
       return;
     }
 
-    const normalized = targetEndpoints.map((value) => value.trim()).filter((value) => value !== '');
-    if (normalized.length === 0) {
+    const normalizedPairs = targetEndpoints
+      .map((value, i) => ({ endpoint: value.trim(), tupleId: targetTupleIds?.[i] }))
+      .filter((pair) => pair.endpoint !== '');
+    if (normalizedPairs.length === 0) {
       setDispatchErrors(['No hay endpoints GET configurados.']);
       setStatusMessage('Agrega al menos un endpoint GET antes de enviar.');
       scrollToResultsPanel();
@@ -5463,13 +5540,13 @@ function App() {
       const nextResults: DispatchResult[] = [];
       const collectedErrors: string[] = [];
 
-      for (const [index, endpointTuple] of normalized.entries()) {
+      for (const [index, { endpoint: endpointTuple, tupleId }] of normalizedPairs.entries()) {
         if (stopRequestedRef.current) {
           setStatusMessage(`Envio GET detenido. ${nextResults.length} endpoint(s) procesado(s).`);
           break;
         }
 
-        setStatusMessage(`Enviando GET ${index + 1} de ${normalized.length}...`);
+        setStatusMessage(`Enviando GET ${index + 1} de ${normalizedPairs.length}...`);
 
         const tupleRow: ImportedRow = {
           rowNumber: index + 1,
@@ -5481,8 +5558,8 @@ function App() {
         let payload: PostRequestPayload;
 
         try {
-          requestPreview = createRequestPreview(tupleRow, endpointTuple);
-          payload = buildPayload(tupleRow, endpointTuple);
+          requestPreview = createRequestPreview(tupleRow, endpointTuple, tupleId);
+          payload = buildPayload(tupleRow, endpointTuple, tupleId);
         } catch (error) {
           const templateError = error instanceof Error ? error.message : 'Error de plantilla';
           collectedErrors.push(`GET ${index + 1}: ${templateError}`);
@@ -5539,7 +5616,7 @@ function App() {
           break;
         }
 
-        if (delayMs > 0 && index < normalized.length - 1) {
+        if (delayMs > 0 && index < normalizedPairs.length - 1) {
           await delay(delayMs);
         }
       }
@@ -5566,7 +5643,9 @@ function App() {
   }
 
   function addGetEndpointTuple() {
+    const newTupleId = createHistoryId();
     setGetEndpointTuples((current) => [...current, '']);
+    setGetEndpointTupleIds((current) => [...current, newTupleId]);
     setSelectedGetEndpointIndex(getEndpointTuples.length);
   }
 
@@ -5601,6 +5680,18 @@ function App() {
         });
 
         return remapped;
+      });
+      return next;
+    });
+    setGetEndpointTupleIds((current) => {
+      if (current.length <= 1) {
+        return current;
+      }
+      const next = current.filter((_, itemIndex) => itemIndex !== index);
+      setEndpointRuntimeParamsByTupleId((prev) => {
+        const nextParams = { ...prev };
+        delete nextParams[current[index] ?? ''];
+        return nextParams;
       });
       return next;
     });
@@ -5736,7 +5827,7 @@ function App() {
         sessionKey: 'send-get-active',
       },
       () => {
-        dispatchGetTuples([selectedGetEndpoint]);
+        dispatchGetTuples([selectedGetEndpoint], [getEndpointTupleIds[selectedGetEndpointIndex] ?? '']);
       },
     );
   }
@@ -5752,7 +5843,7 @@ function App() {
         sessionKey: 'send-get-batch',
       },
       () => {
-        dispatchGetTuples(getEndpointTuples);
+        dispatchGetTuples(getEndpointTuples, getEndpointTupleIds);
       },
     );
   }
@@ -6037,7 +6128,14 @@ function App() {
             <div className="field stretch-full endpoint-config-panel">
               <span>Endpoints</span>
               <div className="get-tuples-list">
-                {getEndpointTuples.map((endpointTuple, index) => (
+                {getEndpointTuples.map((endpointTuple, index) => {
+                  const tupleId = getEndpointTupleIds[index] ?? '';
+                  const tupleRuntimeParams = tupleId
+                    ? (endpointRuntimeParamsByTupleId[tupleId] ?? pathParamValues[endpointTuple] ?? {})
+                    : (pathParamValues[endpointTuple] ?? {});
+                  const tupleTemplateParams = extractEndpointRuntimeParams(endpointTuple).filter((param) => param.kind === 'template');
+
+                  return (
                   <div key={`get-tuple-${index}`} className="get-tuple-row">
                     <div className="endpoint-input-row">
                       <input
@@ -6072,11 +6170,21 @@ function App() {
                               type="text"
                               className="path-param-input"
                               placeholder={param.kind === 'path' ? `Valor para :${param.name}` : `Valor para {{${param.name}}}`}
-                              value={pathParamValues[endpointTuple]?.[param.name] ?? ''}
-                              onChange={(e) => setPathParamValues((prev) => ({
-                                ...prev,
-                                [endpointTuple]: { ...(prev[endpointTuple] ?? {}), [param.name]: e.target.value },
-                              }))}
+                              value={tupleRuntimeParams[param.name] ?? ''}
+                              onChange={(e) => {
+                                if (tupleId) {
+                                  setEndpointRuntimeParamsByTupleId((prev) => ({
+                                    ...prev,
+                                    [tupleId]: { ...(prev[tupleId] ?? {}), [param.name]: e.target.value },
+                                  }));
+                                  return;
+                                }
+
+                                setPathParamValues((prev) => ({
+                                  ...prev,
+                                  [endpointTuple]: { ...(prev[endpointTuple] ?? {}), [param.name]: e.target.value },
+                                }));
+                              }}
                             />
                           </label>
                         ))}
@@ -6089,9 +6197,14 @@ function App() {
                       <button type="button" className="ghost-button" onClick={() => removeGetEndpointTuple(index)} disabled={getEndpointTuples.length === 1}>
                         Eliminar
                       </button>
+                      {tupleTemplateParams.length > 0 ? (
+                        <button type="button" className="ghost-button" onClick={() => openGetEndpointParamGroupDialog(index)}>
+                          Anadir grupo de parametros
+                        </button>
+                      ) : null}
                     </div>
                   </div>
-                ))}
+                );})}
               </div>
               <button type="button" className="secondary-button" onClick={addGetEndpointTuple}>+ Agregar endpoint GET</button>
             </div>
