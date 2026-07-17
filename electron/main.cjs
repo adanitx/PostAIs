@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, safeStorage, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
@@ -344,6 +344,64 @@ ipcMain.handle('secrets:delete', (_event, payload) => {
 
 ipcMain.handle('secrets:list', () => {
   return listSecretDescriptors();
+});
+
+ipcMain.handle('file:saveText', async (_event, payload) => {
+  const window = BrowserWindow.getFocusedWindow();
+  if (!window) {
+    return {
+      ok: false,
+      canceled: false,
+      error: 'No hay ventana activa.',
+    };
+  }
+
+  const suggestedName = String(payload?.suggestedName ?? 'export.json').trim();
+  const title = String(payload?.title ?? 'Guardar archivo').trim();
+  const content = String(payload?.content ?? '');
+
+  try {
+    const result = await dialog.showSaveDialog(window, {
+      title,
+      defaultPath: suggestedName,
+      filters: [
+        { name: 'JSON', extensions: ['json'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+
+    if (result.canceled) {
+      return {
+        ok: false,
+        canceled: true,
+        error: null,
+      };
+    }
+
+    const filePath = result.filePath;
+    if (!filePath) {
+      return {
+        ok: false,
+        canceled: false,
+        error: 'No se seleccionó ruta de archivo.',
+      };
+    }
+
+    fs.writeFileSync(filePath, content, 'utf8');
+
+    return {
+      ok: true,
+      canceled: false,
+      error: null,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error ?? 'Unknown error');
+    return {
+      ok: false,
+      canceled: false,
+      error: errorMessage,
+    };
+  }
 });
 
 ipcMain.handle('http:request', async (_event, request) => {
