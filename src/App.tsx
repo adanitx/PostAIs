@@ -56,6 +56,7 @@ const MAX_FAVORITE_NAME_LENGTH = 40;
 const MAX_REST_DESCRIPTION_LENGTH = 50;
 const MAX_RESPONSE_PREVIEW_LINES = 50;
 const MAX_POST_RESPONSE_INPUT_SIZE = 250000;
+const MAX_BASE_ENDPOINT_MATCHES = 50;
 const POST_RESPONSE_BLOCKED_PATTERNS: ReadonlyArray<{ pattern: RegExp; reason: string }> = [
   { pattern: /\b(?:window|document|globalThis|global|self)\b/i, reason: 'No se permite acceder al DOM ni al contexto global.' },
   { pattern: /\b(?:Function|eval)\b/i, reason: 'No se permite ejecutar codigo dinamico dentro del script.' },
@@ -1215,22 +1216,27 @@ function getMatchingFavoriteBaseEndpoints(query: string, favorites: FavoriteBase
     return [];
   }
 
+  const queryTokens = normalizedQuery.split(/\s+/).filter((token) => token.length > 0);
+
   return favorites
-    .filter((favorite) =>
-      favorite.baseUrl.toLowerCase().includes(normalizedQuery)
-      || favorite.name.toLowerCase().includes(normalizedQuery)
-      || favorite.description.toLowerCase().includes(normalizedQuery),
-    )
+    .filter((favorite) => {
+      const searchableText = `${favorite.baseUrl} ${favorite.name} ${favorite.description}`.toLowerCase();
+      return queryTokens.every((token) => searchableText.includes(token));
+    })
     .sort((left, right) => {
       const leftRank = Math.min(
-        getFavoriteMatchRank(left.baseUrl, normalizedQuery),
-        getFavoriteMatchRank(left.name, normalizedQuery),
-        getFavoriteMatchRank(left.description, normalizedQuery),
+        ...queryTokens.map((token) => Math.min(
+          getFavoriteMatchRank(left.baseUrl, token),
+          getFavoriteMatchRank(left.name, token),
+          getFavoriteMatchRank(left.description, token),
+        )),
       );
       const rightRank = Math.min(
-        getFavoriteMatchRank(right.baseUrl, normalizedQuery),
-        getFavoriteMatchRank(right.name, normalizedQuery),
-        getFavoriteMatchRank(right.description, normalizedQuery),
+        ...queryTokens.map((token) => Math.min(
+          getFavoriteMatchRank(right.baseUrl, token),
+          getFavoriteMatchRank(right.name, token),
+          getFavoriteMatchRank(right.description, token),
+        )),
       );
 
       if (leftRank !== rightRank) {
@@ -1239,7 +1245,33 @@ function getMatchingFavoriteBaseEndpoints(query: string, favorites: FavoriteBase
 
       return left.name.localeCompare(right.name);
     })
-    .slice(0, 8);
+    .slice(0, MAX_BASE_ENDPOINT_MATCHES);
+}
+
+function hasMoreFavoriteBaseEndpointMatches(query: string, favorites: FavoriteBaseEndpointEntry[]): boolean {
+  const normalizedQuery = normalizeFavoriteBaseEndpoint(query).toLowerCase();
+  if (normalizedQuery.length < 1) {
+    return false;
+  }
+
+  const queryTokens = normalizedQuery.split(/\s+/).filter((token) => token.length > 0);
+  let matchCount = 0;
+
+  for (const favorite of favorites) {
+    const searchableText = `${favorite.baseUrl} ${favorite.name} ${favorite.description}`.toLowerCase();
+    const matches = queryTokens.every((token) => searchableText.includes(token));
+
+    if (!matches) {
+      continue;
+    }
+
+    matchCount += 1;
+    if (matchCount > MAX_BASE_ENDPOINT_MATCHES) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function getMatchingFavoriteCommands(query: string, favorites: FavoriteCommandEntry[]): FavoriteCommandEntry[] {
@@ -2002,9 +2034,8 @@ function App() {
   });
   const [historySearch, setHistorySearch] = useState('');
   const [historyMethodFilter, setHistoryMethodFilter] = useState<'ALL' | HttpMethod>('ALL');
-  const [favoriteEndpointSearch, setFavoriteEndpointSearch] = useState('');
-  const [favoriteEndpointMethodFilter, setFavoriteEndpointMethodFilter] = useState<'ALL' | HttpMethod>('ALL');
-  const [favoriteEndpointEnvironmentFilter, setFavoriteEndpointEnvironmentFilter] = useState<'ALL' | FavoriteEnvironment>('ALL');
+  const [favoritesManagementSearch, setFavoritesManagementSearch] = useState('');
+  const [favoritesManagementCommandMethodFilter, setFavoritesManagementCommandMethodFilter] = useState<'ALL' | HttpMethod>('ALL');
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [descriptionDialog, setDescriptionDialog] = useState<DescriptionDialogState | null>(null);
   const [sampleScriptDialog, setSampleScriptDialog] = useState<SampleScriptDialogState | null>(null);
@@ -2075,6 +2106,10 @@ function App() {
     () => getMatchingFavoriteBaseEndpoints(baseEndpoint, contextualFavoriteBaseEndpoints),
     [baseEndpoint, contextualFavoriteBaseEndpoints],
   );
+  const hasMaxBaseEndpointMatches = useMemo(
+    () => hasMoreFavoriteBaseEndpointMatches(baseEndpoint, contextualFavoriteBaseEndpoints),
+    [baseEndpoint, contextualFavoriteBaseEndpoints],
+  );
   const commandMatches = useMemo(
     () => getMatchingFavoriteCommands(commandEndpoint, contextualFavoriteCommands),
     [commandEndpoint, contextualFavoriteCommands],
@@ -2114,20 +2149,7 @@ function App() {
   );
   const filteredFavoriteEndpoints = useMemo(
     () => favoriteEndpoints
-      .filter((entry) => {
-        const matchesMethod = favoriteEndpointMethodFilter === 'ALL' || entry.method === favoriteEndpointMethodFilter;
-        const matchesEnvironment = favoriteEndpointEnvironmentFilter === 'ALL' || entry.environment === favoriteEndpointEnvironmentFilter;
-        if (!matchesMethod || !matchesEnvironment) {
-          return false;
-        }
-
-        const query = favoriteEndpointSearch.trim().toLowerCase();
-        if (!query) {
-          return true;
-        }
-
-        return [entry.name, entry.description, entry.url, entry.method, entry.environment].some((value) => value.toLowerCase().includes(query));
-      })
+      .filter((entry) => entry.environment === favoriteEnvironment)
       .sort((left, right) => {
         const byEnvironment = compareFavoriteEnvironment(left.environment, right.environment);
         if (byEnvironment !== 0) {
@@ -2141,8 +2163,55 @@ function App() {
 
         return left.name.localeCompare(right.name);
       }),
-    [favoriteEndpointEnvironmentFilter, favoriteEndpointMethodFilter, favoriteEndpointSearch, favoriteEndpoints],
+    [favoriteEndpoints, favoriteEnvironment],
   );
+  const filteredFavoriteBaseEndpointsForManagement = useMemo(() => {
+    const normalizedQuery = favoritesManagementSearch.trim().toLowerCase();
+    const queryTokens = normalizedQuery.split(/\s+/).filter((token) => token.length > 0);
+
+    const matchesTokens = (value: string) => queryTokens.every((token) => value.includes(token));
+
+    return contextualFavoriteBaseEndpoints
+      .filter((entry) => {
+        if (queryTokens.length === 0) {
+          return true;
+        }
+
+        const searchable = [entry.name, entry.baseUrl, entry.description, entry.environment]
+          .join(' ')
+          .toLowerCase();
+        return matchesTokens(searchable);
+      })
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }, [contextualFavoriteBaseEndpoints, favoritesManagementSearch]);
+  const filteredFavoriteCommandsForManagement = useMemo(() => {
+    const normalizedQuery = favoritesManagementSearch.trim().toLowerCase();
+    const queryTokens = normalizedQuery.split(/\s+/).filter((token) => token.length > 0);
+
+    const matchesTokens = (value: string) => queryTokens.every((token) => value.includes(token));
+
+    return favoriteCommands
+      .filter((entry) => entry.environment === favoriteEnvironment)
+      .filter((entry) => favoritesManagementCommandMethodFilter === 'ALL' || entry.method === favoritesManagementCommandMethodFilter)
+      .filter((entry) => {
+        if (queryTokens.length === 0) {
+          return true;
+        }
+
+        const searchable = [entry.name, entry.command, entry.description, entry.method, entry.environment]
+          .join(' ')
+          .toLowerCase();
+        return matchesTokens(searchable);
+      })
+      .sort((left, right) => {
+        const byMethod = compareHttpMethod(left.method, right.method);
+        if (byMethod !== 0) {
+          return byMethod;
+        }
+
+        return left.name.localeCompare(right.name);
+      });
+  }, [favoriteCommands, favoriteEnvironment, favoritesManagementCommandMethodFilter, favoritesManagementSearch]);
   const savedSecretsByKey = useMemo(
     () => Object.fromEntries(savedSecrets.map((secret) => [secret.key, secret.scope] as const)),
     [savedSecrets],
@@ -3204,7 +3273,10 @@ function App() {
     return (
       <div className="endpoint-favorites-panel">
         <div className="endpoint-favorites-block">
-          <span className="muted-small">Coincidencias endpoint base</span>
+          <div className="endpoint-favorites-header">
+            <span className="muted-small">Coincidencias endpoint base</span>
+            {hasMaxBaseEndpointMatches ? <span className="match-limit-indicator">MAX</span> : null}
+          </div>
           <div className={`endpoint-favorites-scroll${baseEndpointMatches.length >= 3 ? ' endpoint-favorites-scroll-min' : ''}`}>
             {baseEndpointMatches.map((entry) => (
               <button
@@ -7279,17 +7351,57 @@ function App() {
             </section>
 
             <section className="panel split-layout">
+              <div className="favorites-management-filter">
+                <div className="favorites-management-filter-row">
+                  <label className="field compact-field favorites-management-filter-field">
+                    <span>Buscar en endpoints base y comandos</span>
+                    <input
+                      className="history-search-input"
+                      value={favoritesManagementSearch}
+                      onChange={(event) => setFavoritesManagementSearch(event.target.value)}
+                      placeholder="Filtrar por nombre, descripcion, URL, comando o metodo"
+                      aria-label="Buscar en gestion de favoritos"
+                    />
+                  </label>
+                  <div className="chip-row favorites-method-toggle" role="group" aria-label="Filtrar comandos por metodo">
+                    <button
+                      type="button"
+                      className={`chip chip-button ${favoritesManagementCommandMethodFilter === 'ALL' ? 'favorites-method-toggle-active' : ''}`}
+                      onClick={() => setFavoritesManagementCommandMethodFilter('ALL')}
+                      aria-pressed={favoritesManagementCommandMethodFilter === 'ALL'}
+                    >
+                      Todos
+                    </button>
+                    <button
+                      type="button"
+                      className={`chip chip-button ${favoritesManagementCommandMethodFilter === 'GET' ? 'favorites-method-toggle-active' : ''}`}
+                      onClick={() => setFavoritesManagementCommandMethodFilter('GET')}
+                      aria-pressed={favoritesManagementCommandMethodFilter === 'GET'}
+                    >
+                      GET
+                    </button>
+                    <button
+                      type="button"
+                      className={`chip chip-button ${favoritesManagementCommandMethodFilter === 'POST' ? 'favorites-method-toggle-active' : ''}`}
+                      onClick={() => setFavoritesManagementCommandMethodFilter('POST')}
+                      aria-pressed={favoritesManagementCommandMethodFilter === 'POST'}
+                    >
+                      POST
+                    </button>
+                  </div>
+                </div>
+              </div>
               <article className="preview-panel">
                 <div className="panel-header">
                   <h2>Endpoints base favoritos</h2>
-                  <span>{contextualFavoriteBaseEndpoints.length}</span>
+                  <span>{filteredFavoriteBaseEndpointsForManagement.length}</span>
                 </div>
                 <p className="muted-small">Los endpoints base se comparten entre GET y POST en el constructor.</p>
-                {contextualFavoriteBaseEndpoints.length === 0 ? (
-                  <p className="muted">No hay endpoints base favoritos para este entorno.</p>
+                {filteredFavoriteBaseEndpointsForManagement.length === 0 ? (
+                  <p className="muted">No hay endpoints base favoritos que coincidan para este entorno.</p>
                 ) : (
                   <div className="history-list">
-                    {contextualFavoriteBaseEndpoints.map((entry) => (
+                    {filteredFavoriteBaseEndpointsForManagement.map((entry) => (
                       <article key={entry.id} className="history-card">
                         <div className="history-card-title">
                           <input
@@ -7368,17 +7480,28 @@ function App() {
               <article className="preview-panel">
                 <div className="panel-header">
                   <h2>Comandos favoritos</h2>
-                  <span>{contextualFavoriteCommands.length}</span>
+                  <span>{filteredFavoriteCommandsForManagement.length}</span>
                 </div>
-                {contextualFavoriteCommands.length === 0 ? (
-                  <p className="muted">No hay comandos favoritos para este metodo y entorno.</p>
+                {filteredFavoriteCommandsForManagement.length === 0 ? (
+                  <p className="muted">No hay comandos favoritos que coincidan para este entorno.</p>
                 ) : (
                   <div className="history-list">
-                    {contextualFavoriteCommands.map((entry) => {
+                    {filteredFavoriteCommandsForManagement.map((entry) => {
                       const latestResult = findLatestGetResultForCommand(entry);
 
                       return (
                         <article key={entry.id} className="history-card">
+                          <div className="chip-row favorite-summary-badges">
+                            <button
+                              type="button"
+                              className="chip chip-button"
+                              onClick={() => setMethod(entry.method)}
+                              title={`Usar ${entry.method} en el constructor`}
+                            >
+                              {entry.method}
+                            </button>
+                            <span className={`env-badge env-badge-${entry.environment.toLowerCase()}`}>{entry.environment}</span>
+                          </div>
                           <div className="history-card-title">
                             <input
                               value={entry.name}
@@ -7517,33 +7640,6 @@ function App() {
                 <div className="panel-header">
                   <h2>Endpoints favoritos</h2>
                   <span>{filteredFavoriteEndpoints.length}</span>
-                </div>
-                <div className="action-row">
-                  <input
-                    value={favoriteEndpointSearch}
-                    onChange={(event) => setFavoriteEndpointSearch(event.target.value)}
-                    placeholder="Buscar endpoint favorito"
-                    aria-label="Buscar endpoint favorito"
-                  />
-                  <select
-                    value={favoriteEndpointMethodFilter}
-                    onChange={(event) => setFavoriteEndpointMethodFilter(event.target.value as 'ALL' | HttpMethod)}
-                    aria-label="Filtrar favoritos por metodo"
-                  >
-                    <option value="ALL">Todos los metodos</option>
-                    <option value="GET">GET</option>
-                    <option value="POST">POST</option>
-                  </select>
-                  <select
-                    value={favoriteEndpointEnvironmentFilter}
-                    onChange={(event) => setFavoriteEndpointEnvironmentFilter(event.target.value as 'ALL' | FavoriteEnvironment)}
-                    aria-label="Filtrar favoritos por entorno"
-                  >
-                    <option value="ALL">Todos los entornos</option>
-                    <option value="DEV">DEV</option>
-                    <option value="PROD">PROD</option>
-                    <option value="QA">QA</option>
-                  </select>
                 </div>
                 {filteredFavoriteEndpoints.length === 0 ? (
                   <p className="muted">No hay endpoints favoritos que coincidan.</p>
