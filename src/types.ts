@@ -97,7 +97,6 @@ export interface FavoriteBaseEndpointEntry {
   name: string;
   description: string;
   baseUrl: string;
-  method: HttpMethod;
   environment: FavoriteEnvironment;
   createdAt: string;
 }

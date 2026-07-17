@@ -1055,7 +1055,6 @@ function toFavoriteBaseEndpointEntry(value: FavoriteBaseEndpointEntry | string):
       name: normalizeFavoriteName(createDefaultFavoriteBaseEndpointName(normalizedBase)),
       description: '',
       baseUrl: normalizedBase,
-      method: 'GET',
       environment: 'DEV',
       createdAt: new Date().toISOString(),
     };
@@ -1075,7 +1074,6 @@ function toFavoriteBaseEndpointEntry(value: FavoriteBaseEndpointEntry | string):
     name: normalizeFavoriteName(typeof value.name === 'string' && value.name.trim() ? value.name.trim() : createDefaultFavoriteBaseEndpointName(normalizedBase)),
     description: typeof value.description === 'string' ? normalizeRestDescription(value.description) : '',
     baseUrl: normalizedBase,
-    method: isHttpMethod(value.method) ? value.method : 'GET',
     environment: isFavoriteEnvironment(value.environment) ? value.environment : 'DEV',
     createdAt: typeof value.createdAt === 'string' ? value.createdAt : new Date().toISOString(),
   };
@@ -2568,7 +2566,6 @@ function App() {
         name: normalizeFavoriteName(createDefaultFavoriteBaseEndpointName(normalized)),
         description: '',
         baseUrl: normalized,
-        method: 'GET',
         environment: favoriteEnvironment,
         createdAt: new Date().toISOString(),
       }, ...current.filter((entry) => !(entry.baseUrl === normalized && entry.environment === favoriteEnvironment))];
@@ -2601,7 +2598,6 @@ function App() {
           name: normalizedName,
           description: normalizedDescription,
           baseUrl: normalizedBaseUrl,
-          method: 'GET',
           environment: favoriteBaseEndpointDraft.environment,
           createdAt: new Date().toISOString(),
         }, ...current];
@@ -4148,7 +4144,7 @@ function App() {
       }
 
       const imported = parsed.items
-        .filter((item): item is FavoriteBaseEndpointEntry => !!item && typeof item === 'object' && typeof item.baseUrl === 'string' && isHttpMethod(item.method) && isFavoriteEnvironment(item.environment))
+        .filter((item): item is FavoriteBaseEndpointEntry => !!item && typeof item === 'object' && typeof item.baseUrl === 'string' && isFavoriteEnvironment(item.environment))
         .map((item) => ({
           ...item,
           id: createHistoryId(),
@@ -4203,26 +4199,37 @@ function App() {
       return;
     }
 
+    // Filtrar comandos por método actual para mantener relevancia
+    const commandsToExport = method === 'POST' 
+      ? favoriteCommands.filter((cmd) => cmd.method === 'POST')
+      : favoriteCommands.filter((cmd) => cmd.method === 'GET');
+
+    if (commandsToExport.length === 0) {
+      setStatusMessage(`No hay comandos favoritos ${method} para exportar.`);
+      return;
+    }
+
     const payload: FavoriteCommandsExportFile = {
       schema: 'postais.favoriteCommands.v1',
       exportedAt: new Date().toISOString(),
-      items: favoriteCommands,
+      items: commandsToExport,
     };
 
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `postais-favorite-commands-${stamp}.json`;
+    const methodLabel = method === 'POST' ? 'POST' : 'GET';
+    const filename = `postais-favorite-commands-${methodLabel}-${stamp}.json`;
     const serialized = JSON.stringify(payload, null, 2);
 
     try {
       if (window.postais?.saveTextFile) {
         const saved = await window.postais.saveTextFile({
           suggestedName: filename,
-          title: 'Exportar comandos favoritos JSON',
+          title: `Exportar comandos favoritos ${methodLabel} JSON`,
           content: serialized,
         });
 
         if (saved.ok) {
-          setStatusMessage(`${favoriteCommands.length} comando(s) favorito(s) exportados.`);
+          setStatusMessage(`${commandsToExport.length} comando(s) favorito(s) ${methodLabel} exportados.`);
           return;
         }
 
@@ -4235,7 +4242,7 @@ function App() {
       }
 
       triggerJsonDownload(serialized, filename);
-      setStatusMessage(`${favoriteCommands.length} comando(s) favorito(s) exportados.`);
+      setStatusMessage(`${commandsToExport.length} comando(s) favorito(s) ${methodLabel} exportados.`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : 'No se pudieron exportar los comandos favoritos.');
     }
@@ -4263,6 +4270,7 @@ function App() {
           name: normalizeFavoriteName(item.name || createDefaultFavoriteCommandName(item.command)),
           description: normalizeRestDescription(typeof item.description === 'string' ? item.description : ''),
           command: normalizeFavoriteCommand(item.command),
+          method: method as HttpMethod,
           defaultRawBody: typeof item.defaultRawBody === 'string' ? item.defaultRawBody : '',
           postResponseScript: typeof item.postResponseScript === 'string' ? item.postResponseScript : '',
         }))
@@ -4301,7 +4309,7 @@ function App() {
       }
 
       setFavoriteCommands((current) => [...uniqueImported, ...current]);
-      setStatusMessage(`${uniqueImported.length} comando(s) favorito(s) importados. ${skippedDuplicates} duplicado(s) omitido(s).`);
+      setStatusMessage(`${uniqueImported.length} comando(s) favorito(s) importados para ${method}. ${skippedDuplicates} duplicado(s) omitido(s).`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : 'No se pudieron importar los comandos favoritos.');
     } finally {
