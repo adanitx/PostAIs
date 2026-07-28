@@ -1708,21 +1708,20 @@ pre {
 }
 
 .path-tree-node {
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.15rem;
 }
 
 .path-tree-node-header {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.4rem 0;
-  transition: background 0.15s ease;
+  gap: 0.3rem;
+  padding: 0.35rem 0.3rem;
+  transition: background 0.1s ease;
+  border-radius: 6px;
 }
 
 .path-tree-node-header:hover {
-  background: color-mix(in srgb, var(--line) 100%, transparent 30%);
-  border-radius: 6px;
-  padding-left: 0.4rem;
+  background: color-mix(in srgb, var(--line) 100%, transparent 40%);
 }
 
 .path-tree-toggle {
@@ -1730,11 +1729,14 @@ pre {
   border: none;
   color: var(--muted);
   cursor: pointer;
-  padding: 0 0.3rem;
-  min-width: 1.2rem;
-  font-size: 0.85rem;
+  padding: 0;
+  min-width: 1rem;
+  font-size: 0.8rem;
   line-height: 1;
-  transition: color 0.15s ease;
+  transition: color 0.1s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .path-tree-toggle:hover {
@@ -1743,37 +1745,34 @@ pre {
 
 .path-tree-toggle-placeholder {
   display: inline-block;
-  width: 1.2rem;
+  width: 1rem;
+  flex-shrink: 0;
 }
 
 .path-tree-item {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.4rem;
   cursor: pointer;
   flex: 1;
   min-width: 0;
-  padding: 0.35rem 0.4rem;
-  border-radius: 6px;
-  transition: background 0.15s ease;
+  padding: 0.25rem 0.3rem;
+  border-radius: 4px;
+  transition: background 0.1s ease;
 }
 
 .path-tree-item:hover {
-  background: color-mix(in srgb, var(--magenta) 20%, transparent 80%);
+  background: color-mix(in srgb, var(--magenta) 15%, transparent 85%);
 }
 
 .path-tree-item-selected {
-  background: color-mix(in srgb, var(--magenta) 28%, transparent 72%);
+  background: color-mix(in srgb, var(--magenta) 25%, transparent 75%);
 }
 
 .path-tree-item input[type='checkbox'] {
   cursor: pointer;
   flex-shrink: 0;
-}
-
-.path-tree-item input[type='checkbox']:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
+  accent-color: var(--magenta);
 }
 
 .path-tree-label {
@@ -1781,26 +1780,27 @@ pre {
   color: var(--text);
   word-break: break-word;
   flex-shrink: 0;
+  font-size: 0.9rem;
 }
 
 .path-tree-value {
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   word-break: break-word;
   margin-left: auto;
   text-align: right;
   flex-shrink: 1;
   min-width: 0;
-  max-width: 45%;
+  max-width: 55%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .path-tree-children {
-  margin-left: 0.8rem;
-  border-left: 1px solid color-mix(in srgb, var(--line) 100%, transparent 50%);
-  padding-left: 0.4rem;
+  margin-left: 0.6rem;
+  border-left: 1px solid color-mix(in srgb, var(--line) 100%, transparent 60%);
+  padding-left: 0.3rem;
 }
 }
 

@@ -349,14 +349,14 @@ function createPostResponseSuggestedPaths(context: PostResponseScriptContext): s
     'meta.ok',
     'meta.errorDetail',
   ];
-  const headerPaths = collectResponsePaths(context.headers, 30, 4).map((path) => `headers.${path}`);
+  const headerPaths = collectResponsePaths(context.headers, 50, 5).map((path) => `headers.${path}`);
   
   let bodyPaths: string[] = [];
   if (isRootArrayBody(context.body)) {
     const firstItem = (context.body as unknown[])[0];
-    bodyPaths = collectResponsePaths(firstItem, 50, 6).map((path) => `body.[*].${normalizePathForArrayItem(path)}`);
+    bodyPaths = collectResponsePaths(firstItem, 100, 7).map((path) => `body.[*].${normalizePathForArrayItem(path)}`);
   } else {
-    bodyPaths = collectResponsePaths(context.body, 50, 6).map((path) => `body.${path}`);
+    bodyPaths = collectResponsePaths(context.body, 100, 7).map((path) => `body.${path}`);
   }
 
   return Array.from(new Set([...metaPaths, ...headerPaths, ...bodyPaths]));
@@ -426,43 +426,82 @@ function extractColumnOrderFromScript(script: string): string[] {
 }
 
 function buildPathTree(paths: string[], context: PostResponseScriptContext): PathTreeNode[] {
-  const root = new Map<string, PathTreeNode>();
+  const root: PathTreeNode[] = [];
+  const nodeMap = new Map<string, PathTreeNode>();
 
+  // First pass: create all nodes
   paths.forEach((fullPath) => {
-    const parts = fullPath.split(/[\.\[\]]/).filter(Boolean);
-    let current = root;
-    let accumulatedPath = '';
-
-    parts.forEach((part, index) => {
-      const isLast = index === parts.length - 1;
-      accumulatedPath = accumulatedPath ? `${accumulatedPath}.${part}` : part;
+    if (!nodeMap.has(fullPath)) {
+      const value = getValueAtPath(context.body, fullPath);
+      const parts = fullPath.split(/[\.\[\]]/).filter(Boolean);
+      const label = parts[parts.length - 1];
       
-      // Rebuild full path notation for nested access
-      const fullPathKey = parts.slice(0, index + 1).join('.');
-
-      if (!current.has(part)) {
-        const value = isLast ? getValueAtPath(context.body, fullPathKey) : undefined;
-        current.set(part, {
-          key: part,
-          label: part,
-          value,
-          fullPath: accumulatedPath,
-          isLeaf: isLast,
-          children: [],
-          expanded: false,
-        });
-      }
-
-      if (!isLast) {
-        const node = current.get(part)!;
-        if (!node.children) node.children = [];
-        const childMap = new Map(node.children.map((c) => [c.key, c]));
-        current = childMap;
-      }
-    });
+      nodeMap.set(fullPath, {
+        key: fullPath,
+        label,
+        value,
+        fullPath,
+        isLeaf: true,
+        children: [],
+      });
+    }
   });
 
-  return Array.from(root.values());
+  // Second pass: build hierarchy
+  paths.forEach((fullPath) => {
+    const parts = fullPath.split(/[\.\[\]]/).filter(Boolean);
+    
+    // Create intermediate nodes if they don't exist
+    let currentPath = '';
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i];
+      const newPath = currentPath ? `${currentPath}.${part}` : part;
+      
+      if (!nodeMap.has(newPath)) {
+        const intermediateValue = getValueAtPath(context.body, newPath);
+        nodeMap.set(newPath, {
+          key: newPath,
+          label: part,
+          value: intermediateValue,
+          fullPath: newPath,
+          isLeaf: false,
+          children: [],
+        });
+      } else {
+        // Mark as non-leaf since it has children
+        nodeMap.get(newPath)!.isLeaf = false;
+      }
+      
+      currentPath = newPath;
+    }
+  });
+
+  // Third pass: build parent-child relationships
+  const sortedPaths = Array.from(nodeMap.keys()).sort();
+  
+  sortedPaths.forEach((fullPath) => {
+    const node = nodeMap.get(fullPath)!;
+    const parts = fullPath.split(/[\.\[\]]/).filter(Boolean);
+    
+    if (parts.length === 1) {
+      // Root level
+      root.push(node);
+    } else {
+      // Find parent
+      const parentParts = parts.slice(0, -1);
+      const parentPath = parentParts.join('.');
+      const parent = nodeMap.get(parentPath);
+      
+      if (parent) {
+        if (!parent.children) parent.children = [];
+        if (!parent.children.find((c) => c.fullPath === fullPath)) {
+          parent.children.push(node);
+        }
+      }
+    }
+  });
+
+  return root;
 }
 
 function filterPathTree(nodes: PathTreeNode[], searchTerm: string): PathTreeNode[] {
@@ -3209,34 +3248,36 @@ function App() {
         displayValue = `[${Array.isArray(node.value) ? `Array(${(node.value as unknown[]).length})` : 'Object'}]`;
       } else {
         const str = String(node.value);
-        displayValue = str.length > 40 ? str.substring(0, 37) + '...' : str;
+        displayValue = str.length > 60 ? str.substring(0, 57) + '...' : str;
       }
     }
 
     return (
       <div key={key} className="path-tree-node">
         <div className="path-tree-node-header" style={{ marginLeft: indent }}>
-          {hasChildren && (
+          {hasChildren ? (
             <button
               type="button"
               className="path-tree-toggle"
               onClick={() => onToggleExpand(node.fullPath)}
               title={isExpanded ? 'Contraer' : 'Expandir'}
+              aria-expanded={isExpanded}
             >
               {isExpanded ? '▼' : '▶'}
             </button>
+          ) : (
+            <span className="path-tree-toggle-placeholder" />
           )}
-          {!hasChildren && <span className="path-tree-toggle-placeholder" />}
           
           <label className={`path-tree-item${checked ? ' path-tree-item-selected' : ''}`}>
             <input
               type="checkbox"
               checked={checked}
               onChange={() => onTogglePath(node.fullPath)}
-              disabled={!node.isLeaf}
+              aria-label={`Seleccionar ${node.label}`}
             />
             <span className="path-tree-label">{node.label}</span>
-            {displayValue && <small className="path-tree-value">{displayValue}</small>}
+            {displayValue && <span className="path-tree-value" title={displayValue}>{displayValue}</span>}
           </label>
         </div>
         
