@@ -132,6 +132,16 @@ interface DescriptionDialogState {
   title: string;
 }
 
+interface PathTreeNode {
+  key: string;
+  label: string;
+  value?: unknown;
+  fullPath: string;
+  isLeaf: boolean;
+  children?: PathTreeNode[];
+  expanded?: boolean;
+}
+
 interface SampleScriptDialogState {
   mode: 'create' | 'edit';
   commandId: string;
@@ -141,7 +151,8 @@ interface SampleScriptDialogState {
   preservedColumnNames: Record<string, string>;
   context: PostResponseScriptContext;
   searchFilter?: string;
-  customPath?: string;
+  pathTreeNodes?: PathTreeNode[];
+  expandedNodes?: Set<string>;
 }
 
 interface EndpointParamRelationDraft {
@@ -414,6 +425,60 @@ function extractColumnOrderFromScript(script: string): string[] {
   return [];
 }
 
+function buildPathTree(paths: string[], context: PostResponseScriptContext): PathTreeNode[] {
+  const root = new Map<string, PathTreeNode>();
+
+  paths.forEach((fullPath) => {
+    const parts = fullPath.split(/[\.\[\]]/).filter(Boolean);
+    let current = root;
+    let accumulatedPath = '';
+
+    parts.forEach((part, index) => {
+      const isLast = index === parts.length - 1;
+      accumulatedPath = accumulatedPath ? `${accumulatedPath}.${part}` : part;
+      
+      // Rebuild full path notation for nested access
+      const fullPathKey = parts.slice(0, index + 1).join('.');
+
+      if (!current.has(part)) {
+        const value = isLast ? getValueAtPath(context.body, fullPathKey) : undefined;
+        current.set(part, {
+          key: part,
+          label: part,
+          value,
+          fullPath: accumulatedPath,
+          isLeaf: isLast,
+          children: [],
+          expanded: false,
+        });
+      }
+
+      if (!isLast) {
+        const node = current.get(part)!;
+        if (!node.children) node.children = [];
+        const childMap = new Map(node.children.map((c) => [c.key, c]));
+        current = childMap;
+      }
+    });
+  });
+
+  return Array.from(root.values());
+}
+
+function filterPathTree(nodes: PathTreeNode[], searchTerm: string): PathTreeNode[] {
+  if (!searchTerm) return nodes;
+
+  const lowerSearch = searchTerm.toLowerCase();
+  
+  return nodes
+    .map((node) => ({
+      ...node,
+      children: node.children ? filterPathTree(node.children, searchTerm) : [],
+      expanded: true, // Auto-expand when searching
+    }))
+    .filter((node) => node.label.toLowerCase().includes(lowerSearch) || (node.children && node.children.length > 0));
+}
+
 function createPostResponseSampleScript(paths: string[], columnNames: Record<string, string> = {}): string {
   const serializedColumnNames = JSON.stringify(columnNames);
   const isArrayIteration = paths.some((path) => path.includes('[*]'));
@@ -574,41 +639,6 @@ function isScriptTableOutput(value: unknown): value is { columns: string[]; rows
 
   return value.columns.every((column) => typeof column === 'string')
     && value.rows.every((row) => isRecord(row));
-}
-
-function formatPathPreviewValue(source: unknown, path: string): string {
-  const value = getValueAtPath(source, path);
-  if (value === undefined) {
-    return 'undefined';
-  }
-
-  if (value === null) {
-    return 'null';
-  }
-
-  if (typeof value === 'object') {
-    try {
-      const json = JSON.stringify(value);
-      return json.length > 120 ? `${json.substring(0, 117)}...` : json;
-    } catch {
-      return '[complex object]';
-    }
-  }
-
-  if (typeof value === 'string') {
-    return value.length > 120 ? `${value.slice(0, 117)}...` : value;
-  }
-
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    return String(value);
-  }
-
-  try {
-    const serialized = JSON.stringify(value);
-    return serialized.length > 120 ? `${serialized.slice(0, 117)}...` : serialized;
-  } catch {
-    return '[unserializable]';
-  }
 }
 
 function validatePostResponseScript(script: string, response: unknown): string | null {
@@ -3028,6 +3058,7 @@ function App() {
       return;
     }
 
+    const pathTreeNodes = buildPathTree(suggestedPaths, responseContext);
     const defaultSelection = suggestedPaths.slice(0, 8);
     setSampleScriptDialog({
       mode: 'create',
@@ -3037,6 +3068,9 @@ function App() {
       selectedPaths: defaultSelection,
       preservedColumnNames: {},
       context: responseContext,
+      searchFilter: '',
+      pathTreeNodes,
+      expandedNodes: new Set(),
     });
   }
 
@@ -3052,6 +3086,7 @@ function App() {
     const selectedPathsFromScript = extractSelectedPathsFromScript(script, suggestedPaths);
     const columnOrderFromScript = extractColumnOrderFromScript(script);
     const mergedSuggestedPaths = Array.from(new Set([...selectedPathsFromScript, ...suggestedPaths]));
+    const pathTreeNodes = buildPathTree(mergedSuggestedPaths, responseContext);
 
     if (columnOrderFromScript.length > 0) {
       setPostResponseColumnOrders((current) => ({
@@ -3068,6 +3103,9 @@ function App() {
       selectedPaths: selectedPathsFromScript,
       preservedColumnNames,
       context: responseContext,
+      searchFilter: '',
+      pathTreeNodes,
+      expandedNodes: new Set(),
     });
   }
 
@@ -3118,6 +3156,97 @@ function App() {
 
   function closeSampleScriptDialog() {
     setSampleScriptDialog(null);
+  }
+
+  function togglePathTreeNodeExpansion(nodePath: string) {
+    setSampleScriptDialog((current) => {
+      if (!current) return null;
+      const expanded = current.expandedNodes || new Set();
+      const newExpanded = new Set(expanded);
+      if (newExpanded.has(nodePath)) {
+        newExpanded.delete(nodePath);
+      } else {
+        newExpanded.add(nodePath);
+      }
+      return {
+        ...current,
+        expandedNodes: newExpanded,
+      };
+    });
+  }
+
+  function renderPathTreeNodes(
+    nodes: PathTreeNode[],
+    selectedPaths: string[],
+    expandedNodes: Set<string>,
+    onTogglePath: (path: string) => void,
+    onToggleExpand: (nodePath: string) => void
+  ): React.ReactNode {
+    if (nodes.length === 0) {
+      return <div className="muted-small" style={{ padding: '1rem', textAlign: 'center' }}>No se encontraron campos.</div>;
+    }
+
+    return nodes.map((node) => renderPathTreeNode(node, selectedPaths, expandedNodes, onTogglePath, onToggleExpand, ''));
+  }
+
+  function renderPathTreeNode(
+    node: PathTreeNode,
+    selectedPaths: string[],
+    expandedNodes: Set<string>,
+    onTogglePath: (path: string) => void,
+    onToggleExpand: (nodePath: string) => void,
+    indent: string
+  ): React.ReactNode {
+    const key = `path-tree-${node.fullPath}`;
+    const isExpanded = expandedNodes.has(node.fullPath);
+    const checked = selectedPaths.includes(node.fullPath);
+    const hasChildren = node.children && node.children.length > 0;
+    
+    // Format value display
+    let displayValue = '';
+    if (node.value !== undefined && node.value !== null) {
+      if (typeof node.value === 'object') {
+        displayValue = `[${Array.isArray(node.value) ? `Array(${(node.value as unknown[]).length})` : 'Object'}]`;
+      } else {
+        const str = String(node.value);
+        displayValue = str.length > 40 ? str.substring(0, 37) + '...' : str;
+      }
+    }
+
+    return (
+      <div key={key} className="path-tree-node">
+        <div className="path-tree-node-header" style={{ marginLeft: indent }}>
+          {hasChildren && (
+            <button
+              type="button"
+              className="path-tree-toggle"
+              onClick={() => onToggleExpand(node.fullPath)}
+              title={isExpanded ? 'Contraer' : 'Expandir'}
+            >
+              {isExpanded ? '▼' : '▶'}
+            </button>
+          )}
+          {!hasChildren && <span className="path-tree-toggle-placeholder" />}
+          
+          <label className={`path-tree-item${checked ? ' path-tree-item-selected' : ''}`}>
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={() => onTogglePath(node.fullPath)}
+              disabled={!node.isLeaf}
+            />
+            <span className="path-tree-label">{node.label}</span>
+            {displayValue && <small className="path-tree-value">{displayValue}</small>}
+          </label>
+        </div>
+        
+        {hasChildren && isExpanded && (
+          <div className="path-tree-children">
+            {node.children!.map((child) => renderPathTreeNode(child, selectedPaths, expandedNodes, onTogglePath, onToggleExpand, indent + '  '))}
+          </div>
+        )}
+      </div>
+    );
   }
 
   function saveSampleScriptDialog() {
@@ -8098,16 +8227,17 @@ function App() {
               </header>
 
               <p className="muted-small">
-                Selecciona campos de meta, headers y body para crear un script de visualizacion dinamica en formato tabla.
+                Haz clic en los campos para expandir/contraer. Selecciona los que deseas mostrar en la tabla.
               </p>
 
               <div className="sample-script-search-row">
                 <input
                   type="text"
-                  placeholder="Buscar campos (ej: destination, value, string)..."
+                  placeholder="Buscar campos (ej: destination, string, value)..."
                   value={sampleScriptDialog.searchFilter || ''}
                   onChange={(event) => setSampleScriptDialog((current) => current ? { ...current, searchFilter: event.target.value } : null)}
                   className="sample-script-search-input"
+                  autoFocus
                 />
               </div>
 
@@ -8127,57 +8257,15 @@ function App() {
               </label>
 
               <div className="sample-script-path-list">
-                {sampleScriptDialog.suggestedPaths
-                  .filter((path) => !sampleScriptDialog.searchFilter || path.toLowerCase().includes(sampleScriptDialog.searchFilter.toLowerCase()))
-                  .map((path) => {
-                  const checked = sampleScriptDialog.selectedPaths.includes(path);
-                  const previewValue = formatPathPreviewValue(sampleScriptDialog.context, path);
-
-                  return (
-                    <label key={`sample-script-path-${path}`} className={`sample-script-path-item${checked ? ' sample-script-path-item-selected' : ''}`}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleSampleScriptPath(path)}
-                      />
-                      <span className="sample-script-path-name">{path}</span>
-                      <small className="sample-script-path-preview" title={previewValue}>{previewValue}</small>
-                    </label>
-                  );
-                })}
-              </div>
-
-              <div className="sample-script-custom-path-row">
-                <input
-                  type="text"
-                  placeholder="O escriba un path personalizado (ej: body.[*].destination.string)..."
-                  value={sampleScriptDialog.customPath || ''}
-                  onChange={(event) => setSampleScriptDialog((current) => current ? { ...current, customPath: event.target.value } : null)}
-                  className="sample-script-custom-path-input"
-                />
-                <button
-                  type="button"
-                  className="ghost-button"
-                  onClick={() => {
-                    const trimmedPath = (sampleScriptDialog.customPath || '').trim();
-                    if (trimmedPath && !sampleScriptDialog.selectedPaths.includes(trimmedPath)) {
-                      setSampleScriptDialog((current) => {
-                        if (!current) return null;
-                        return {
-                          ...current,
-                          selectedPaths: [...current.selectedPaths, trimmedPath],
-                          suggestedPaths: current.suggestedPaths.includes(trimmedPath)
-                            ? current.suggestedPaths
-                            : [...current.suggestedPaths, trimmedPath],
-                          customPath: '',
-                        };
-                      });
-                    }
-                  }}
-                  disabled={!sampleScriptDialog.customPath?.trim()}
-                >
-                  + Agregar
-                </button>
+                {renderPathTreeNodes(
+                  sampleScriptDialog.pathTreeNodes
+                    ? filterPathTree(sampleScriptDialog.pathTreeNodes, sampleScriptDialog.searchFilter || '')
+                    : [],
+                  sampleScriptDialog.selectedPaths,
+                  sampleScriptDialog.expandedNodes || new Set(),
+                  toggleSampleScriptPath,
+                  togglePathTreeNodeExpansion
+                )}
               </div>
 
               <div className="action-row confirm-actions">

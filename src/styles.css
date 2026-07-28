@@ -1680,17 +1680,24 @@ pre {
 }
 
 .sample-script-path-item {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 0.55rem 0.65rem;
   display: grid;
-  grid-template-columns: auto minmax(0, 0.8fr) minmax(0, 1.2fr);
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 0.6rem;
-  background: color-mix(in srgb, var(--panel-subtle) 78%, transparent 22%);
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-subtle) 60%, transparent 40%);
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.sample-script-path-item:hover {
+  background: color-mix(in srgb, var(--panel-subtle) 75%, transparent 25%);
+  border-color: var(--line);
 }
 
 .sample-script-path-item-selected {
+  background: color-mix(in srgb, var(--magenta) 22%, var(--panel-subtle) 78%, transparent 0%);
   border-color: color-mix(in srgb, var(--magenta) 52%, var(--line) 48%);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--magenta) 24%, transparent 76%);
 }
@@ -1698,6 +1705,103 @@ pre {
 .sample-script-path-name {
   font-weight: 700;
   word-break: break-word;
+}
+
+.path-tree-node {
+  margin-bottom: 0.25rem;
+}
+
+.path-tree-node-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0;
+  transition: background 0.15s ease;
+}
+
+.path-tree-node-header:hover {
+  background: color-mix(in srgb, var(--line) 100%, transparent 30%);
+  border-radius: 6px;
+  padding-left: 0.4rem;
+}
+
+.path-tree-toggle {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 0.3rem;
+  min-width: 1.2rem;
+  font-size: 0.85rem;
+  line-height: 1;
+  transition: color 0.15s ease;
+}
+
+.path-tree-toggle:hover {
+  color: var(--text);
+}
+
+.path-tree-toggle-placeholder {
+  display: inline-block;
+  width: 1.2rem;
+}
+
+.path-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0.4rem;
+  border-radius: 6px;
+  transition: background 0.15s ease;
+}
+
+.path-tree-item:hover {
+  background: color-mix(in srgb, var(--magenta) 20%, transparent 80%);
+}
+
+.path-tree-item-selected {
+  background: color-mix(in srgb, var(--magenta) 28%, transparent 72%);
+}
+
+.path-tree-item input[type='checkbox'] {
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.path-tree-item input[type='checkbox']:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.path-tree-label {
+  font-weight: 500;
+  color: var(--text);
+  word-break: break-word;
+  flex-shrink: 0;
+}
+
+.path-tree-value {
+  color: var(--muted);
+  font-size: 0.85rem;
+  word-break: break-word;
+  margin-left: auto;
+  text-align: right;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 45%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.path-tree-children {
+  margin-left: 0.8rem;
+  border-left: 1px solid color-mix(in srgb, var(--line) 100%, transparent 50%);
+  padding-left: 0.4rem;
+}
 }
 
 .sample-script-path-preview {
