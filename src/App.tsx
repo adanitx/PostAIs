@@ -340,6 +340,24 @@ function normalizePathForArrayItem(path: string): string {
   return path.replace(/^(\[\d+\])+\./g, '').replace(/\[(\d+)\]/g, '.$1');
 }
 
+function getIntermediatePaths(paths: string[]): string[] {
+  // Extract all intermediate paths from a list of full paths
+  // E.g., from 'body.a.b.c' extract 'body', 'body.a', 'body.a.b'
+  const intermediates = new Set<string>();
+  
+  paths.forEach((path) => {
+    const parts = path.split(/[\.\[\]]/).filter(Boolean);
+    let currentPath = '';
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i];
+      currentPath = currentPath ? `${currentPath}.${part}` : part;
+      intermediates.add(currentPath);
+    }
+  });
+  
+  return Array.from(intermediates);
+}
+
 function createPostResponseSuggestedPaths(context: PostResponseScriptContext): string[] {
   const metaPaths = [
     'meta.status',
@@ -359,7 +377,12 @@ function createPostResponseSuggestedPaths(context: PostResponseScriptContext): s
     bodyPaths = collectResponsePaths(context.body, 100, 7).map((path) => `body.${path}`);
   }
 
-  return Array.from(new Set([...metaPaths, ...headerPaths, ...bodyPaths]));
+  // Include root nodes and intermediate paths
+  const rootPaths = ['meta', 'headers', 'body'];
+  const allPaths = [...metaPaths, ...headerPaths, ...bodyPaths];
+  const intermediatePaths = getIntermediatePaths(allPaths);
+  
+  return Array.from(new Set([...rootPaths, ...allPaths, ...intermediatePaths]));
 }
 
 function getColumnKeyForSelectedPath(path: string): string {
@@ -433,7 +456,7 @@ function buildPathTree(paths: string[], context: PostResponseScriptContext): Pat
   const isArrayBody = Array.isArray(context.body) && context.body.length > 0;
   const firstArrayItem: unknown = isArrayBody ? (context.body as unknown[])[0] : null;
 
-  // First pass: create all nodes
+  // First pass: create all nodes from the exact paths provided
   paths.forEach((fullPath) => {
     if (!nodeMap.has(fullPath)) {
       let value: unknown;
@@ -442,6 +465,9 @@ function buildPathTree(paths: string[], context: PostResponseScriptContext): Pat
       if (fullPath.startsWith('body.[*].')) {
         const innerPath = fullPath.replace('body.[*].', '');
         value = firstArrayItem ? getValueAtPath(firstArrayItem, innerPath) : undefined;
+      } else if (fullPath.startsWith('body.')) {
+        const innerPath = fullPath.replace('body.', '');
+        value = getValueAtPath(context.body, innerPath);
       } else {
         value = getValueAtPath(context.body, fullPath);
       }
@@ -460,44 +486,6 @@ function buildPathTree(paths: string[], context: PostResponseScriptContext): Pat
     }
   });
 
-  // Second pass: build hierarchy
-  paths.forEach((fullPath) => {
-    const parts = fullPath.split(/[\.\[\]]/).filter(Boolean);
-    
-    // Create intermediate nodes if they don't exist
-    let currentPath = '';
-    for (let i = 0; i < parts.length - 1; i++) {
-      const part = parts[i];
-      const newPath = currentPath ? `${currentPath}.${part}` : part;
-      
-      if (!nodeMap.has(newPath)) {
-        let intermediateValue: unknown;
-        
-        // Try to get intermediate value
-        if (newPath.startsWith('body.[*].')) {
-          const innerPath = newPath.replace('body.[*].', '');
-          intermediateValue = firstArrayItem ? getValueAtPath(firstArrayItem, innerPath) : undefined;
-        } else {
-          intermediateValue = getValueAtPath(context.body, newPath);
-        }
-        
-        nodeMap.set(newPath, {
-          key: newPath,
-          label: part,
-          value: intermediateValue,
-          fullPath: newPath,
-          isLeaf: false,
-          children: [],
-        });
-      } else {
-        // Mark as non-leaf since it has children
-        nodeMap.get(newPath)!.isLeaf = false;
-      }
-      
-      currentPath = newPath;
-    }
-  });
-
   // Third pass: build parent-child relationships
   const sortedPaths = Array.from(nodeMap.keys()).sort();
   
@@ -509,15 +497,29 @@ function buildPathTree(paths: string[], context: PostResponseScriptContext): Pat
       // Root level
       root.push(node);
     } else {
-      // Find parent
-      const parentParts = parts.slice(0, -1);
-      const parentPath = parentParts.join('.');
-      const parent = nodeMap.get(parentPath);
+      // Find parent by looking for the longest matching prefix in nodeMap
+      let parentPath: string | null = null;
       
-      if (parent) {
-        if (!parent.children) parent.children = [];
-        if (!parent.children.find((c) => c.fullPath === fullPath)) {
-          parent.children.push(node);
+      // Try to find parent by checking if paths start with this and are one level deeper
+      for (let i = fullPath.length - 1; i > 0; i--) {
+        const candidate = fullPath.substring(0, i);
+        
+        // Check if this candidate looks like a valid parent path
+        // (ends with . or ], not in the middle of a path segment)
+        if ((fullPath[i] === '.' || fullPath[i] === ']') && nodeMap.has(candidate)) {
+          parentPath = candidate;
+          break;
+        }
+      }
+      
+      if (parentPath) {
+        const parent = nodeMap.get(parentPath);
+        if (parent) {
+          parent.isLeaf = false;
+          if (!parent.children) parent.children = [];
+          if (!parent.children.find((c) => c.fullPath === fullPath)) {
+            parent.children.push(node);
+          }
         }
       }
     }
