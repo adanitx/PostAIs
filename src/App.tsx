@@ -140,6 +140,8 @@ interface SampleScriptDialogState {
   selectedPaths: string[];
   preservedColumnNames: Record<string, string>;
   context: PostResponseScriptContext;
+  searchFilter?: string;
+  customPath?: string;
 }
 
 interface EndpointParamRelationDraft {
@@ -252,11 +254,11 @@ function getValueAtPath(source: unknown, path: string): unknown {
   }, source);
 }
 
-function collectResponsePaths(source: unknown, maxPaths = 14): string[] {
+function collectResponsePaths(source: unknown, maxPaths = 60, maxDepth = 6): string[] {
   const paths: string[] = [];
 
-  function walk(node: unknown, prefix: string) {
-    if (paths.length >= maxPaths) {
+  function walk(node: unknown, prefix: string, depth: number) {
+    if (paths.length >= maxPaths || depth > maxDepth) {
       return;
     }
 
@@ -266,15 +268,15 @@ function collectResponsePaths(source: unknown, maxPaths = 14): string[] {
         return;
       }
 
-      node.slice(0, 4).forEach((item, index) => {
+      node.slice(0, 2).forEach((item, index) => {
         const nextPrefix = prefix ? `${prefix}[${index}]` : `[${index}]`;
-        walk(item, nextPrefix);
+        walk(item, nextPrefix, depth + 1);
       });
       return;
     }
 
     if (isRecord(node)) {
-      const entries = Object.entries(node).slice(0, 12);
+      const entries = Object.entries(node);
       if (entries.length === 0 && prefix) {
         paths.push(prefix);
         return;
@@ -282,7 +284,14 @@ function collectResponsePaths(source: unknown, maxPaths = 14): string[] {
 
       entries.forEach(([key, value]) => {
         const nextPrefix = prefix ? `${prefix}.${key}` : key;
-        walk(value, nextPrefix);
+        
+        // Siempre agregar el path del nivel actual
+        paths.push(nextPrefix);
+        
+        // Recursivamente explorar objetos y arrays
+        if (isRecord(value) || Array.isArray(value)) {
+          walk(value, nextPrefix, depth + 1);
+        }
       });
       return;
     }
@@ -292,8 +301,8 @@ function collectResponsePaths(source: unknown, maxPaths = 14): string[] {
     }
   }
 
-  walk(source, '');
-  return Array.from(new Set(paths)).slice(0, maxPaths);
+  walk(source, '', 0);
+  return Array.from(new Set(paths)).sort();
 }
 
 function buildPostResponseContext(result: DispatchResult): PostResponseScriptContext {
@@ -329,14 +338,14 @@ function createPostResponseSuggestedPaths(context: PostResponseScriptContext): s
     'meta.ok',
     'meta.errorDetail',
   ];
-  const headerPaths = collectResponsePaths(context.headers, 10).map((path) => `headers.${path}`);
+  const headerPaths = collectResponsePaths(context.headers, 30, 4).map((path) => `headers.${path}`);
   
   let bodyPaths: string[] = [];
   if (isRootArrayBody(context.body)) {
     const firstItem = (context.body as unknown[])[0];
-    bodyPaths = collectResponsePaths(firstItem, 20).map((path) => `body.[*].${normalizePathForArrayItem(path)}`);
+    bodyPaths = collectResponsePaths(firstItem, 50, 6).map((path) => `body.[*].${normalizePathForArrayItem(path)}`);
   } else {
-    bodyPaths = collectResponsePaths(context.body, 20).map((path) => `body.${path}`);
+    bodyPaths = collectResponsePaths(context.body, 50, 6).map((path) => `body.${path}`);
   }
 
   return Array.from(new Set([...metaPaths, ...headerPaths, ...bodyPaths]));
@@ -8092,6 +8101,16 @@ function App() {
                 Selecciona campos de meta, headers y body para crear un script de visualizacion dinamica en formato tabla.
               </p>
 
+              <div className="sample-script-search-row">
+                <input
+                  type="text"
+                  placeholder="Buscar campos (ej: destination, value, string)..."
+                  value={sampleScriptDialog.searchFilter || ''}
+                  onChange={(event) => setSampleScriptDialog((current) => current ? { ...current, searchFilter: event.target.value } : null)}
+                  className="sample-script-search-input"
+                />
+              </div>
+
               <div className="sample-script-quick-actions">
                 <button type="button" className="ghost-button" onClick={() => selectSampleScriptPathsByPrefix('meta.')}>Solo meta</button>
                 <button type="button" className="ghost-button" onClick={() => selectSampleScriptPathsByPrefix('headers.')}>Solo headers</button>
@@ -8108,7 +8127,9 @@ function App() {
               </label>
 
               <div className="sample-script-path-list">
-                {sampleScriptDialog.suggestedPaths.map((path) => {
+                {sampleScriptDialog.suggestedPaths
+                  .filter((path) => !sampleScriptDialog.searchFilter || path.toLowerCase().includes(sampleScriptDialog.searchFilter.toLowerCase()))
+                  .map((path) => {
                   const checked = sampleScriptDialog.selectedPaths.includes(path);
                   const previewValue = formatPathPreviewValue(sampleScriptDialog.context, path);
 
@@ -8124,6 +8145,39 @@ function App() {
                     </label>
                   );
                 })}
+              </div>
+
+              <div className="sample-script-custom-path-row">
+                <input
+                  type="text"
+                  placeholder="O escriba un path personalizado (ej: body.[*].destination.string)..."
+                  value={sampleScriptDialog.customPath || ''}
+                  onChange={(event) => setSampleScriptDialog((current) => current ? { ...current, customPath: event.target.value } : null)}
+                  className="sample-script-custom-path-input"
+                />
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => {
+                    const trimmedPath = (sampleScriptDialog.customPath || '').trim();
+                    if (trimmedPath && !sampleScriptDialog.selectedPaths.includes(trimmedPath)) {
+                      setSampleScriptDialog((current) => {
+                        if (!current) return null;
+                        return {
+                          ...current,
+                          selectedPaths: [...current.selectedPaths, trimmedPath],
+                          suggestedPaths: current.suggestedPaths.includes(trimmedPath)
+                            ? current.suggestedPaths
+                            : [...current.suggestedPaths, trimmedPath],
+                          customPath: '',
+                        };
+                      });
+                    }
+                  }}
+                  disabled={!sampleScriptDialog.customPath?.trim()}
+                >
+                  + Agregar
+                </button>
               </div>
 
               <div className="action-row confirm-actions">
