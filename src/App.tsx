@@ -3171,17 +3171,33 @@ function App() {
   }
 
   function getPathDescendants(path: string, allPaths: string[]): string[] {
-    // Get all paths that start with this path (children and descendants)
-    const prefix = path.endsWith('.') ? path : `${path}.`;
-    return allPaths.filter((p) => p.startsWith(prefix) || p === path);
+    // Get this path plus all paths that are children/descendants
+    const results = [path]; // Include the path itself
+    
+    // Match exact children and deeper descendants
+    const pathWithDot = path.endsWith('.') ? path : `${path}.`;
+    const pathWithBracket = path.endsWith('.') ? path.slice(0, -1) + '.[' : `${path}.[`;
+    
+    allPaths.forEach((p) => {
+      if (p !== path && (p.startsWith(pathWithDot) || p.startsWith(pathWithBracket))) {
+        if (!results.includes(p)) {
+          results.push(p);
+        }
+      }
+    });
+    
+    return results;
   }
 
   function getPathAncestors(path: string): string[] {
     // Get all parent paths
     const ancestors: string[] = [];
-    const parts = path.split('.');
+    const parts = path.split(/[\.\[]/).filter(Boolean);
     for (let i = 1; i < parts.length; i++) {
-      ancestors.push(parts.slice(0, i).join('.'));
+      const parentPath = parts.slice(0, i).join('.');
+      if (!ancestors.includes(parentPath)) {
+        ancestors.push(parentPath);
+      }
     }
     return ancestors;
   }
@@ -3196,14 +3212,29 @@ function App() {
       let newSelectedPaths = [...current.selectedPaths];
 
       if (isSelected) {
-        // Deselecting: remove this path and all descendants
+        // Deselecting: remove this path and all its descendants
         const descendants = getPathDescendants(path, current.suggestedPaths);
         newSelectedPaths = newSelectedPaths.filter((p) => !descendants.includes(p));
+        
+        // Also deselect ancestors if they have no other selected children
+        const ancestors = getPathAncestors(path);
+        ancestors.forEach((ancestor) => {
+          const ancestorDescendants = getPathDescendants(ancestor, current.suggestedPaths);
+          const hasSelectedDescendants = ancestorDescendants.some(
+            (d) => d !== ancestor && newSelectedPaths.includes(d)
+          );
+          if (!hasSelectedDescendants) {
+            newSelectedPaths = newSelectedPaths.filter((p) => p !== ancestor);
+          }
+        });
       } else {
-        // Selecting: add this path and all descendants
+        // Selecting: add this path and all its descendants
         const descendants = getPathDescendants(path, current.suggestedPaths);
-        const toAdd = descendants.filter((d) => !newSelectedPaths.includes(d));
-        newSelectedPaths.push(...toAdd);
+        descendants.forEach((d) => {
+          if (!newSelectedPaths.includes(d)) {
+            newSelectedPaths.push(d);
+          }
+        });
         
         // Also select all ancestors
         const ancestors = getPathAncestors(path);
@@ -3243,9 +3274,15 @@ function App() {
         return current;
       }
 
+      // Include paths that start with prefix OR are exactly the prefix root (without dot)
+      const prefixRoot = prefix.slice(0, -1); // Remove trailing dot: 'body.' -> 'body'
+      const filtered = current.suggestedPaths.filter(
+        (path) => path === prefixRoot || path.startsWith(prefix)
+      );
+      
       return {
         ...current,
-        selectedPaths: current.suggestedPaths.filter((path) => path.startsWith(prefix)),
+        selectedPaths: filtered,
       };
     });
   }
