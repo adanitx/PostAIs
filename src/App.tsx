@@ -3221,15 +3221,26 @@ function App() {
   }
 
   function getPathAncestors(path: string): string[] {
-    // Get all parent paths
+    // Get all parent paths, correctly handling bracket notation like [*]
     const ancestors: string[] = [];
-    const parts = path.split(/[\.\[]/).filter(Boolean);
-    for (let i = 1; i < parts.length; i++) {
-      const parentPath = parts.slice(0, i).join('.');
-      if (!ancestors.includes(parentPath)) {
-        ancestors.push(parentPath);
+    
+    // Match all segments: word characters followed optionally by bracket notation
+    // This preserves [*], [0], etc. in the path reconstruction
+    const segments = path.match(/[^.\[]+(?:\[\*\])?/g) || [];
+    
+    let current = '';
+    for (const segment of segments) {
+      if (current) {
+        current += '.';
+      }
+      current += segment;
+      
+      // Add as ancestor if it's not the full path itself
+      if (current !== path && !ancestors.includes(current)) {
+        ancestors.push(current);
       }
     }
+    
     return ancestors;
   }
 
