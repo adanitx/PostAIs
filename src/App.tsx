@@ -4832,20 +4832,32 @@ function App() {
   }
 
   function applyHistoryEntry(entry: RequestHistoryEntry) {
-    // Detect if the restored headers contain authorization info
-    // If so, set authorization scheme to BASIC, otherwise NONE
+    // Detect if the restored headers contain an Authorization header with secret references
+    // This indicates Basic auth was used, but the actual values are in the secretKeyStore
     let detectedAuthScheme: AuthorizationScheme = 'NONE';
     
     if (entry.headers && typeof entry.headers === 'object' && 'Authorization' in entry.headers) {
       const authHeader = entry.headers.Authorization;
-      // Check if it's a Basic auth header with secret placeholders
-      if (typeof authHeader === 'string' && authHeader.includes('basic-auth:')) {
+      // Check for either format:
+      // - Template placeholders: "{{basic-auth:...}}"
+      // - Masked format: "Basic [secret:...]" (used when saved from preview)
+      if (typeof authHeader === 'string' && 
+          (authHeader.includes('basic-auth:') || authHeader.includes('Basic [secret:'))) {
         detectedAuthScheme = 'BASIC';
+        // Important: Remove the Authorization header from the headers text
+        // The actual token will be generated from the current secretKeyStore values
+        // This prevents accidental exposure of the masked format
+        const cleanedHeaders = { ...entry.headers };
+        delete cleanedHeaders.Authorization;
+        setHeadersText(formatJson(cleanedHeaders));
+      } else {
+        setHeadersText(formatJson(entry.headers));
       }
+    } else {
+      setHeadersText(formatJson(entry.headers));
     }
     
     setAuthorizationScheme(detectedAuthScheme);
-    setHeadersText(formatJson(entry.headers));
     setQueryText(formatJson(entry.query));
     setDispatchErrors([]);
     setResults([]);
