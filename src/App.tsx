@@ -4832,7 +4832,19 @@ function App() {
   }
 
   function applyHistoryEntry(entry: RequestHistoryEntry) {
-    setAuthorizationScheme('NONE');
+    // Detect if the restored headers contain authorization info
+    // If so, set authorization scheme to BASIC, otherwise NONE
+    let detectedAuthScheme: AuthorizationScheme = 'NONE';
+    
+    if (entry.headers && typeof entry.headers === 'object' && 'Authorization' in entry.headers) {
+      const authHeader = entry.headers.Authorization;
+      // Check if it's a Basic auth header with secret placeholders
+      if (typeof authHeader === 'string' && authHeader.includes('basic-auth:')) {
+        detectedAuthScheme = 'BASIC';
+      }
+    }
+    
+    setAuthorizationScheme(detectedAuthScheme);
     setHeadersText(formatJson(entry.headers));
     setQueryText(formatJson(entry.query));
     setDispatchErrors([]);
