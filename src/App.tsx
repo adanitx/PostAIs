@@ -3158,12 +3158,15 @@ function App() {
       }));
     }
 
+    // Expand paths with their ancestors so the tree shows correct selection state
+    const selectedPathsWithAncestors = expandPathsWithAncestors(selectedPathsFromScript);
+
     setSampleScriptDialog({
       mode: 'edit',
       commandId: commandEntry.id,
       commandLabel: commandEntry.command,
       suggestedPaths: mergedSuggestedPaths,
-      selectedPaths: selectedPathsFromScript,
+      selectedPaths: selectedPathsWithAncestors,
       preservedColumnNames,
       context: responseContext,
       searchFilter: '',
@@ -3189,6 +3192,32 @@ function App() {
     });
     
     return results;
+  }
+
+  function getLeafPaths(selectedPaths: string[], suggestedPaths: string[]): string[] {
+    // Remove ancestor paths if any of their descendants are also selected
+    // This ensures we only pass "leaf" paths to the script generation
+    return selectedPaths.filter((path) => {
+      const descendants = getPathDescendants(path, suggestedPaths);
+      // If this path has any descendants that are also selected, skip this path
+      // (keep only the leaf descendants)
+      const hasSelectedDescendant = descendants.some(
+        (desc) => desc !== path && selectedPaths.includes(desc)
+      );
+      return !hasSelectedDescendant;
+    });
+  }
+
+  function expandPathsWithAncestors(paths: string[]): string[] {
+    // Given a list of paths, return the paths plus all their ancestors
+    const allPaths = new Set(paths);
+    
+    paths.forEach((path) => {
+      const ancestors = getPathAncestors(path);
+      ancestors.forEach((ancestor) => allPaths.add(ancestor));
+    });
+    
+    return Array.from(allPaths);
   }
 
   function getPathAncestors(path: string): string[] {
@@ -3421,8 +3450,11 @@ function App() {
       return;
     }
 
+    // Get only the leaf paths (remove ancestors if their descendants are selected)
+    const leafPaths = getLeafPaths(sampleScriptDialog.selectedPaths, sampleScriptDialog.suggestedPaths);
+    
     const nextColumnNames = Object.fromEntries(
-      sampleScriptDialog.selectedPaths
+      leafPaths
         .map((path) => {
           const key = getColumnKeyForSelectedPath(path);
           const preservedName = sampleScriptDialog.preservedColumnNames[key] ?? sampleScriptDialog.preservedColumnNames[path];
@@ -3435,7 +3467,7 @@ function App() {
         .filter((entry): entry is readonly [string, string] => entry !== null),
     );
 
-    const sampleScript = createPostResponseSampleScript(sampleScriptDialog.selectedPaths, nextColumnNames);
+    const sampleScript = createPostResponseSampleScript(leafPaths, nextColumnNames);
     setFavoriteCommands((current) => current.map((entry) => (
       entry.id === sampleScriptDialog.commandId
         ? { ...entry, postResponseScript: sampleScript }
