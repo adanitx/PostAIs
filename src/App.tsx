@@ -3263,16 +3263,12 @@ function App() {
   }
 
   function toggleSampleScriptPath(path: string) {
-    console.log('[DEBUG] toggleSampleScriptPath called with:', path);
     setSampleScriptDialog((current) => {
       if (!current) {
-        console.log('[DEBUG] current state is null, returning');
         return current;
       }
 
       const isSelected = current.selectedPaths.includes(path);
-      console.log('[DEBUG] isSelected:', isSelected);
-      console.log('[DEBUG] current.selectedPaths:', current.selectedPaths);
       
       let newSelectedPaths = [...current.selectedPaths];
 
@@ -3295,7 +3291,6 @@ function App() {
       } else {
         // Selecting: add this path and all its descendants
         const descendants = getPathDescendants(path, current.suggestedPaths);
-        console.log('[DEBUG] descendants:', descendants);
         descendants.forEach((d) => {
           if (!newSelectedPaths.includes(d)) {
             newSelectedPaths.push(d);
@@ -3304,16 +3299,12 @@ function App() {
         
         // Also select all ancestors
         const ancestors = getPathAncestors(path);
-        console.log('[DEBUG] ancestors:', ancestors);
         ancestors.forEach((ancestor) => {
           if (!newSelectedPaths.includes(ancestor)) {
-            console.log('[DEBUG] adding ancestor:', ancestor);
             newSelectedPaths.push(ancestor);
           }
         });
       }
-
-      console.log('[DEBUG] newSelectedPaths after toggle:', newSelectedPaths);
       return {
         ...current,
         selectedPaths: newSelectedPaths,
@@ -3403,10 +3394,6 @@ function App() {
     const isExpanded = expandedNodes.has(node.fullPath);
     const checked = selectedPaths.includes(node.fullPath);
     const hasChildren = node.children && node.children.length > 0;
-    
-    if (checked || node.label === 'containerDimensionsType') {
-      console.log(`[DEBUG RENDER] node="${node.label}" fullPath="${node.fullPath}" checked=${checked}`);
-    }
     
     // Format value display - improved
     let displayValue = '';
