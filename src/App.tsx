@@ -3224,19 +3224,24 @@ function App() {
     // Get all parent paths, correctly handling bracket notation like [*]
     const ancestors: string[] = [];
     
-    // Match all segments: word characters followed optionally by bracket notation
-    // This preserves [*], [0], etc. in the path reconstruction
-    const segments = path.match(/[^.\[]+(?:\[\*\])?/g) || [];
+    // Split on dots, but keep bracket notation attached to what comes before
+    // e.g., "body.[*].containerDimensionsType" → ["body", "[*]", "containerDimensionsType"]
+    const parts = path.split('.').filter(Boolean);
     
     let current = '';
-    for (const segment of segments) {
-      if (current) {
-        current += '.';
-      }
-      current += segment;
+    for (let i = 0; i < parts.length - 1; i++) { // -1 because we don't want the full path itself
+      const part = parts[i];
       
-      // Add as ancestor if it's not the full path itself
-      if (current !== path && !ancestors.includes(current)) {
+      // If this part ends with ] (like "[*]"), append it directly without dot
+      if (current === '') {
+        current = part;
+      } else if (part.startsWith('[')) {
+        current += part; // Append bracket notation directly, no dot
+      } else {
+        current += '.' + part; // Append with dot for normal segments
+      }
+      
+      if (!ancestors.includes(current)) {
         ancestors.push(current);
       }
     }
@@ -5270,10 +5275,13 @@ function App() {
           const serialized = JSON.stringify(newOrder);
           let updatedScript = entry.postResponseScript;
 
-          if (/columnOrder:\s*\[([\s\S]*?)\]/.test(updatedScript)) {
-            updatedScript = updatedScript.replace(/columnOrder:\s*\[([\s\S]*?)\]/, `columnOrder: ${serialized}`);
+          // Use a function-based replacement to avoid issues with special characters in the serialized data
+          if (/columnOrder:\s*\[[\s\S]*?\]/.test(updatedScript)) {
+            updatedScript = updatedScript.replace(/columnOrder:\s*\[[\s\S]*?\]/, `columnOrder: ${serialized}`);
           } else if (updatedScript.includes('columnNames:')) {
-            updatedScript = updatedScript.replace(/columnNames:\s*(\{[\s\S]*?\}),/, `columnNames: $1,\n  columnOrder: ${serialized},`);
+            updatedScript = updatedScript.replace(/(columnNames:\s*\{[\s\S]*?\}),/, (_match, columnNamesSection) => {
+              return `${columnNamesSection},\n  columnOrder: ${serialized},`;
+            });
           } else if (updatedScript.includes('title: "custom-table-view",')) {
             updatedScript = updatedScript.replace('title: "custom-table-view",', `title: "custom-table-view",\n  columnOrder: ${serialized},`);
           }
