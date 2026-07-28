@@ -358,8 +358,8 @@ function getIntermediatePaths(paths: string[]): string[] {
       if (current === '') {
         current = part;
       } else if (part.startsWith('[')) {
-        // Bracket notation attaches directly without dot
-        current += part;
+        // Bracket notation needs a dot before it
+        current += '.' + part;
       } else {
         current += '.' + part;
       }
@@ -370,6 +370,7 @@ function getIntermediatePaths(paths: string[]): string[] {
   
   return Array.from(intermediates);
 }
+
 
 
 function createPostResponseSuggestedPaths(context: PostResponseScriptContext): string[] {
@@ -3246,13 +3247,11 @@ function App() {
     for (let i = 0; i < parts.length - 1; i++) { // -1 because we don't want the full path itself
       const part = parts[i];
       
-      // If this part ends with ] (like "[*]"), append it directly without dot
+      // Always append with dot, including bracket notation
       if (current === '') {
         current = part;
-      } else if (part.startsWith('[')) {
-        current += part; // Append bracket notation directly, no dot
       } else {
-        current += '.' + part; // Append with dot for normal segments
+        current += '.' + part;
       }
       
       if (!ancestors.includes(current)) {
