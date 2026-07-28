@@ -343,20 +343,34 @@ function normalizePathForArrayItem(path: string): string {
 function getIntermediatePaths(paths: string[]): string[] {
   // Extract all intermediate paths from a list of full paths
   // E.g., from 'body.a.b.c' extract 'body', 'body.a', 'body.a.b'
+  // Correctly handles bracket notation like 'body.[*].a' → 'body', 'body.[*]'
   const intermediates = new Set<string>();
   
   paths.forEach((path) => {
-    const parts = path.split(/[\.\[\]]/).filter(Boolean);
-    let currentPath = '';
+    // Split by dots but preserve bracket notation attached to parts
+    const parts = path.split('.').filter(Boolean);
+    let current = '';
+    
+    // Generate all parent paths (not including the full path itself)
     for (let i = 0; i < parts.length - 1; i++) {
       const part = parts[i];
-      currentPath = currentPath ? `${currentPath}.${part}` : part;
-      intermediates.add(currentPath);
+      
+      if (current === '') {
+        current = part;
+      } else if (part.startsWith('[')) {
+        // Bracket notation attaches directly without dot
+        current += part;
+      } else {
+        current += '.' + part;
+      }
+      
+      intermediates.add(current);
     }
   });
   
   return Array.from(intermediates);
 }
+
 
 function createPostResponseSuggestedPaths(context: PostResponseScriptContext): string[] {
   const metaPaths = [
