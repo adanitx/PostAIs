@@ -429,10 +429,23 @@ function buildPathTree(paths: string[], context: PostResponseScriptContext): Pat
   const root: PathTreeNode[] = [];
   const nodeMap = new Map<string, PathTreeNode>();
 
+  // Determine if we're dealing with array body
+  const isArrayBody = Array.isArray(context.body) && context.body.length > 0;
+  const firstArrayItem: unknown = isArrayBody ? (context.body as unknown[])[0] : null;
+
   // First pass: create all nodes
   paths.forEach((fullPath) => {
     if (!nodeMap.has(fullPath)) {
-      const value = getValueAtPath(context.body, fullPath);
+      let value: unknown;
+      
+      // For array body paths, extract from first element
+      if (fullPath.startsWith('body.[*].')) {
+        const innerPath = fullPath.replace('body.[*].', '');
+        value = firstArrayItem ? getValueAtPath(firstArrayItem, innerPath) : undefined;
+      } else {
+        value = getValueAtPath(context.body, fullPath);
+      }
+      
       const parts = fullPath.split(/[\.\[\]]/).filter(Boolean);
       const label = parts[parts.length - 1];
       
@@ -458,7 +471,16 @@ function buildPathTree(paths: string[], context: PostResponseScriptContext): Pat
       const newPath = currentPath ? `${currentPath}.${part}` : part;
       
       if (!nodeMap.has(newPath)) {
-        const intermediateValue = getValueAtPath(context.body, newPath);
+        let intermediateValue: unknown;
+        
+        // Try to get intermediate value
+        if (newPath.startsWith('body.[*].')) {
+          const innerPath = newPath.replace('body.[*].', '');
+          intermediateValue = firstArrayItem ? getValueAtPath(firstArrayItem, innerPath) : undefined;
+        } else {
+          intermediateValue = getValueAtPath(context.body, newPath);
+        }
+        
         nodeMap.set(newPath, {
           key: newPath,
           label: part,
@@ -3148,6 +3170,22 @@ function App() {
     });
   }
 
+  function getPathDescendants(path: string, allPaths: string[]): string[] {
+    // Get all paths that start with this path (children and descendants)
+    const prefix = path.endsWith('.') ? path : `${path}.`;
+    return allPaths.filter((p) => p.startsWith(prefix) || p === path);
+  }
+
+  function getPathAncestors(path: string): string[] {
+    // Get all parent paths
+    const ancestors: string[] = [];
+    const parts = path.split('.');
+    for (let i = 1; i < parts.length; i++) {
+      ancestors.push(parts.slice(0, i).join('.'));
+    }
+    return ancestors;
+  }
+
   function toggleSampleScriptPath(path: string) {
     setSampleScriptDialog((current) => {
       if (!current) {
@@ -3155,11 +3193,30 @@ function App() {
       }
 
       const isSelected = current.selectedPaths.includes(path);
+      let newSelectedPaths = [...current.selectedPaths];
+
+      if (isSelected) {
+        // Deselecting: remove this path and all descendants
+        const descendants = getPathDescendants(path, current.suggestedPaths);
+        newSelectedPaths = newSelectedPaths.filter((p) => !descendants.includes(p));
+      } else {
+        // Selecting: add this path and all descendants
+        const descendants = getPathDescendants(path, current.suggestedPaths);
+        const toAdd = descendants.filter((d) => !newSelectedPaths.includes(d));
+        newSelectedPaths.push(...toAdd);
+        
+        // Also select all ancestors
+        const ancestors = getPathAncestors(path);
+        ancestors.forEach((ancestor) => {
+          if (!newSelectedPaths.includes(ancestor)) {
+            newSelectedPaths.push(ancestor);
+          }
+        });
+      }
+
       return {
         ...current,
-        selectedPaths: isSelected
-          ? current.selectedPaths.filter((candidate) => candidate !== path)
-          : [...current.selectedPaths, path],
+        selectedPaths: newSelectedPaths,
       };
     });
   }
@@ -3241,15 +3298,36 @@ function App() {
     const checked = selectedPaths.includes(node.fullPath);
     const hasChildren = node.children && node.children.length > 0;
     
-    // Format value display
+    // Format value display - improved
     let displayValue = '';
+    let valueTooltip = '';
+    
     if (node.value !== undefined && node.value !== null) {
       if (typeof node.value === 'object') {
-        displayValue = `[${Array.isArray(node.value) ? `Array(${(node.value as unknown[]).length})` : 'Object'}]`;
+        if (Array.isArray(node.value)) {
+          displayValue = `Array[${node.value.length}]`;
+          valueTooltip = `Array con ${node.value.length} elementos`;
+        } else {
+          const keys = Object.keys(node.value);
+          displayValue = `Object{${keys.length}}`;
+          valueTooltip = `Objeto con ${keys.length} propiedades`;
+        }
+      } else if (typeof node.value === 'string') {
+        displayValue = node.value.length > 50 ? `"${node.value.substring(0, 47)}..."` : `"${node.value}"`;
+        valueTooltip = `Texto: ${node.value}`;
+      } else if (typeof node.value === 'number') {
+        displayValue = `${node.value}`;
+        valueTooltip = `Número: ${node.value}`;
+      } else if (typeof node.value === 'boolean') {
+        displayValue = `${node.value}`;
+        valueTooltip = `Booleano: ${node.value}`;
       } else {
-        const str = String(node.value);
-        displayValue = str.length > 60 ? str.substring(0, 57) + '...' : str;
+        displayValue = String(node.value);
+        valueTooltip = `${node.value}`;
       }
+    } else if (node.value === null) {
+      displayValue = 'null';
+      valueTooltip = 'Valor nulo';
     }
 
     return (
@@ -3277,7 +3355,11 @@ function App() {
               aria-label={`Seleccionar ${node.label}`}
             />
             <span className="path-tree-label">{node.label}</span>
-            {displayValue && <span className="path-tree-value" title={displayValue}>{displayValue}</span>}
+            {displayValue && (
+              <span className="path-tree-value" title={valueTooltip}>
+                {displayValue}
+              </span>
+            )}
           </label>
         </div>
         
