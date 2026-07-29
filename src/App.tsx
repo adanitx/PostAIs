@@ -557,9 +557,89 @@ function filterPathTree(nodes: PathTreeNode[], searchTerm: string): PathTreeNode
     .filter((node) => node.label.toLowerCase().includes(lowerSearch) || (node.children && node.children.length > 0));
 }
 
-function createPostResponseSampleScript(paths: string[], columnNames: Record<string, string> = {}): string {
+function createPostResponseSampleScript(
+  paths: string[],
+  columnNames: Record<string, string> = {},
+  context?: PostResponseScriptContext,
+): string {
   const serializedColumnNames = JSON.stringify(columnNames);
   const isArrayIteration = paths.some((path) => path.includes('[*]'));
+  const hasBodySelection = paths.some((path) => path === 'body' || path.startsWith('body.'));
+
+  if (!isArrayIteration && hasBodySelection && typeof context?.body === 'string') {
+    const selectedPaths = paths.map((path) => `"${path}"`).join(', ');
+
+    return [
+      '// Parser para body de texto plano con bloques y lineas tipo key=value.',
+      '// Cada vez que aparece "Estacion ..." se abre una nueva fila.',
+      'const raw = String(helpers.context.body ?? "");',
+      'const rows = [];',
+      'let current = null;',
+      '',
+      'const pushCurrent = () => {',
+      '  if (!current) return;',
+      '  if (Object.keys(current).length === 0) return;',
+      '  rows.push(current);',
+      '  current = null;',
+      '};',
+      '',
+      'const lines = raw.replace(/\\r\\n/g, "\\n").replace(/\\r/g, "\\n").split("\\n");',
+      'for (const originalLine of lines) {',
+      '  const line = originalLine.replace(/^\\s+|\\s+$/g, "");',
+      '  if (!line) {',
+      '    pushCurrent();',
+      '    continue;',
+      '  }',
+      '',
+      '  const stationMatch = line.match(/^Estacion\\s+(.+)$/i);',
+      '  if (stationMatch) {',
+      '    pushCurrent();',
+      '    current = { Estacion: stationMatch[1].trim() };',
+      '    continue;',
+      '  }',
+      '',
+      '  if (!current) {',
+      '    current = {};',
+      '  }',
+      '',
+      '  const kvMatch = line.match(/^([^:=]+?)\\s*(?:=|:)\\s*(.+)$/);',
+      '  if (kvMatch) {',
+      '    const key = kvMatch[1].trim();',
+      '    const value = kvMatch[2].trim();',
+      '    current[key] = value;',
+      '  } else {',
+      '    const notes = Array.isArray(current.__notes) ? current.__notes : [];',
+      '    notes.push(line);',
+      '    current.__notes = notes;',
+      '  }',
+      '}',
+      'pushCurrent();',
+      '',
+      'const allColumns = new Set(["Estacion"]);',
+      'for (const row of rows) {',
+      '  Object.keys(row).forEach((key) => allColumns.add(key));',
+      '}',
+      '',
+      'const columns = Array.from(allColumns);',
+      'const normalizedRows = rows.map((row) => {',
+      '  const nextRow = { ...row };',
+      '  if (Array.isArray(nextRow.__notes)) {',
+      '    nextRow.__notes = nextRow.__notes.join(" | ");',
+      '  }',
+      '  return nextRow;',
+      '});',
+      '',
+      'return {',
+      '  title: "custom-table-view",',
+      `  columnNames: ${serializedColumnNames},`,
+      '  selectedPaths: [',
+      `    ${selectedPaths}`,
+      '  ],',
+      '  columns,',
+      '  rows: normalizedRows,',
+      '};',
+    ].join('\n');
+  }
   
   if (isArrayIteration) {
     const bodyArrayPaths = paths.filter((path) => path.startsWith('body.[*]'));
@@ -3496,7 +3576,7 @@ function App() {
         .filter((entry): entry is readonly [string, string] => entry !== null),
     );
 
-    const sampleScript = createPostResponseSampleScript(leafPaths, nextColumnNames);
+    const sampleScript = createPostResponseSampleScript(leafPaths, nextColumnNames, sampleScriptDialog.context);
     setFavoriteCommands((current) => current.map((entry) => (
       entry.id === sampleScriptDialog.commandId
         ? { ...entry, postResponseScript: sampleScript }
