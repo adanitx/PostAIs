@@ -6,4 +6,7 @@ contextBridge.exposeInMainWorld('postais', {
   deleteSecret: (payload) => ipcRenderer.invoke('secrets:delete', payload),
   listSecrets: () => ipcRenderer.invoke('secrets:list'),
   saveTextFile: (payload) => ipcRenderer.invoke('file:saveText', payload),
+  setZoom: (factor) => ipcRenderer.invoke('window:setZoom', factor),
+  getZoom: () => ipcRenderer.invoke('window:getZoom'),
+  setTitleBarOverlay: (options) => ipcRenderer.invoke('window:setTitleBarOverlay', options),
 });

@@ -19,6 +19,16 @@ import type {
   SecretDescriptor,
   SecretScope,
 } from './types';
+import {
+  APP_LANGUAGE_PREF_STORAGE_KEY,
+  applyTranslationsToMutation,
+  applyTranslationsToSubtree,
+  getTranslatedThemePaletteLabel,
+  listSupportedLanguages,
+  resolveInitialLanguage,
+  translateUiText,
+  type AppLanguage,
+} from './i18n';
 
 const defaultHeaders = JSON.stringify(
   {},
@@ -41,6 +51,7 @@ const exactPlaceholderPattern = /^\s*{{\s*([^{}]+?)\s*}}\s*$/;
 const genericPlaceholderPattern = /{{\s*([^{}]+?)\s*}}/g;
 const TLS_PREF_STORAGE_KEY = 'postais.allowInsecureTls';
 const THEME_PREF_STORAGE_KEY = 'postais.theme';
+const THEME_PALETTE_PREF_STORAGE_KEY = 'postais.themePalette';
 const METHOD_PREF_STORAGE_KEY = 'postais.method';
 const FAVORITE_ENV_PREF_STORAGE_KEY = 'postais.favoriteEnvironment';
 const AUTHORIZATION_SCHEME_PREF_STORAGE_KEY = 'postais.authorizationScheme';
@@ -51,12 +62,12 @@ const FAVORITE_ENDPOINTS_STORAGE_KEY = 'postais.favoriteEndpoints.v1';
 const FAVORITE_BASE_ENDPOINTS_STORAGE_KEY = 'postais.favoriteBaseEndpoints.v1';
 const FAVORITE_COMMANDS_STORAGE_KEY = 'postais.favoriteCommands.v1';
 const FAVORITE_REQUESTS_STORAGE_KEY = 'postais.favoriteRequests.v1';
+const SHOW_COMPOSER_FAVORITES_LIST_PREF_STORAGE_KEY = 'postais.showComposerFavoritesList';
 const MAX_REQUEST_HISTORY_ENTRIES = 150;
-const MAX_FAVORITE_NAME_LENGTH = 40;
+const MAX_FAVORITE_NAME_LENGTH = 50;
 const MAX_REST_DESCRIPTION_LENGTH = 50;
 const MAX_RESPONSE_PREVIEW_LINES = 50;
-const MAX_POST_RESPONSE_INPUT_SIZE = 250000;
-const MAX_BASE_ENDPOINT_MATCHES = 50;
+const MAX_POST_RESPONSE_INPUT_SIZE = 750000;
 const POST_RESPONSE_BLOCKED_PATTERNS: ReadonlyArray<{ pattern: RegExp; reason: string }> = [
   { pattern: /\b(?:window|document|globalThis|global|self)\b/i, reason: 'No se permite acceder al DOM ni al contexto global.' },
   { pattern: /\b(?:Function|eval)\b/i, reason: 'No se permite ejecutar codigo dinamico dentro del script.' },
@@ -68,6 +79,39 @@ const POST_RESPONSE_BLOCKED_PATTERNS: ReadonlyArray<{ pattern: RegExp; reason: s
 type TemplateMode = 'keep-secret-placeholders' | 'mask-secrets';
 type AppSection = 'composer' | 'history' | 'favorites';
 type InterfaceMode = 'basic' | 'advanced';
+type ThemePaletteId = 'default' | 'slate-mint' | 'sand-teal' | 'mono-blue' | 'nocturno';
+
+function isThemePaletteId(value: string | null): value is ThemePaletteId {
+  return value === 'default' || value === 'slate-mint' || value === 'sand-teal' || value === 'mono-blue' || value === 'nocturno';
+}
+
+const THEME_PALETTE_OPTIONS: Array<{ id: ThemePaletteId; label: string; description: string }> = [
+  {
+    id: 'default',
+    label: 'Por defecto',
+    description: 'Paleta actual de PostAIS con variantes clara y oscura.',
+  },
+  {
+    id: 'slate-mint',
+    label: 'Slate Mint',
+    description: 'Base gris pizarra con acentos menta, legibilidad alta en claro y oscuro.',
+  },
+  {
+    id: 'sand-teal',
+    label: 'Sand Teal',
+    description: 'Claro arena con acentos teal y oscuro grafito calido.',
+  },
+  {
+    id: 'mono-blue',
+    label: 'Mono Blue',
+    description: 'Escala azul monocromatica, enfoque tecnico y contraste consistente.',
+  },
+  {
+    id: 'nocturno',
+    label: 'Nocturno',
+    description: 'Tema calido con tonos amarillos y rojizos para reducir luz azul, con alto contraste.',
+  },
+];
 
 interface PostResponseScriptContext {
   meta: {
@@ -155,6 +199,26 @@ interface SampleScriptDialogState {
   expandedNodes?: Set<string>;
 }
 
+interface PostResponseTableFilterState {
+  columnKey: string;
+  value: string;
+}
+
+interface PostResponseTableSortState {
+  columnKey: string;
+  direction: 'asc' | 'desc';
+}
+
+type PreflightTone = 'success' | 'warning' | 'error';
+
+interface PreflightStatusSummary {
+  tone: PreflightTone;
+  label: string;
+  helperText: string;
+  blockingIssues: string[];
+  warningIssues: string[];
+}
+
 interface EndpointParamRelationDraft {
   id: string;
   sourceToken: string;
@@ -172,6 +236,13 @@ interface EndpointParamGroupDialogState {
   blockText: string;
   tokenBlocks: Record<string, string>;
   relations: EndpointParamRelationDraft[];
+}
+
+interface ResultDetailsContextMenuState {
+  x: number;
+  y: number;
+  detailsElement: HTMLDetailsElement;
+  isExpanded: boolean;
 }
 
 interface PostmanHeader {
@@ -388,6 +459,9 @@ function createPostResponseSuggestedPaths(context: PostResponseScriptContext): s
   if (isRootArrayBody(context.body)) {
     const firstItem = (context.body as unknown[])[0];
     bodyPaths = collectResponsePaths(firstItem, 100, 7).map((path) => `body.[*].${normalizePathForArrayItem(path)}`);
+  } else if (typeof context.body === 'string' && context.body.trim().length > 0) {
+    // Plain-text body: expose only the root path so the user can select it and trigger the text parser
+    bodyPaths = ['body'];
   } else {
     bodyPaths = collectResponsePaths(context.body, 100, 7).map((path) => `body.${path}`);
   }
@@ -566,6 +640,72 @@ function createPostResponseSampleScript(
   const isArrayIteration = paths.some((path) => path.includes('[*]'));
   const hasBodySelection = paths.some((path) => path === 'body' || path.startsWith('body.'));
 
+  const toItemAccessor = (path: string): string => {
+    const parts = path.split(/[\.\[\]]/).filter(Boolean);
+    let accessor = '';
+    for (let i = 0; i < parts.length; i += 1) {
+      if (i === 0) {
+        accessor = `item?.${parts[i]}`;
+      } else {
+        accessor += /^\d+$/.test(parts[i]) ? `?.[${parts[i]}]` : `?.${parts[i]}`;
+      }
+    }
+
+    return accessor;
+  };
+
+  const nestedArraySelections = context
+    ? paths.filter((path) => path.startsWith('body.') && Array.isArray(getValueAtPath(context.body, path.slice('body.'.length))))
+    : [];
+
+  if (!isArrayIteration && nestedArraySelections.length > 0 && context) {
+    const arrayPath = nestedArraySelections.sort((left, right) => right.length - left.length)[0];
+    const relativeArrayPath = arrayPath.slice('body.'.length);
+    const arrayValue = getValueAtPath(context.body, relativeArrayPath);
+    const firstItem = Array.isArray(arrayValue) && arrayValue.length > 0 ? arrayValue[0] : null;
+    const selectedNestedChildPaths = paths
+      .filter((path) => path.startsWith(`${arrayPath}[`))
+      .map((path) => path.slice(arrayPath.length + 1).replace(/^\d+\]\.?/, ''))
+      .map((path) => path.replace(/^\./, ''))
+      .filter((path) => path.length > 0);
+
+    const inferredNestedChildPaths = firstItem && isRecord(firstItem)
+      ? collectResponsePaths(firstItem, 40, 6).filter((path) => {
+          const value = getValueAtPath(firstItem, path);
+          return !isRecord(value) && !Array.isArray(value);
+        })
+      : [];
+
+    const cleanPaths = Array.from(new Set(
+      (selectedNestedChildPaths.length > 0 ? selectedNestedChildPaths : inferredNestedChildPaths)
+        .map((path) => path.replace(/^\[\d+\]\.?/, ''))
+        .filter((path) => path.length > 0),
+    ));
+
+    const fields = cleanPaths.map((path) => `      "${path}": ${toItemAccessor(path)}`).join(',\n');
+    const extraFields = paths
+      .filter((path) => path !== arrayPath && !path.startsWith(`${arrayPath}[`))
+      .map((path) => `      "${path}": helpers.get("${path}")`)
+      .join(',\n');
+    const mergedFields = [fields, extraFields].filter((part) => part.trim() !== '').join(',\n');
+    const selectedPaths = paths.map((path) => `"${path}"`).join(', ');
+
+    return [
+      '// Itera sobre un array anidado dentro del body.',
+      `const rows = (helpers.get("${arrayPath}") ?? []).map(item => ({`,
+      mergedFields,
+      '}));',
+      'return {',
+      '  title: "custom-table-view",',
+      `  columnNames: ${serializedColumnNames},`,
+      '  selectedPaths: [',
+      `    ${selectedPaths}`,
+      '  ],',
+      '  rows,',
+      '};',
+    ].join('\n');
+  }
+
   if (!isArrayIteration && hasBodySelection && typeof context?.body === 'string') {
     const selectedPaths = paths.map((path) => `"${path}"`).join(', ');
 
@@ -649,15 +789,7 @@ function createPostResponseSampleScript(
       .map((path) => path.replace(/^\[\d+\]\./, ''))
       .filter((path) => path.length > 0);
     
-    const fields = cleanPaths.map((path) => {
-      const parts = path.split(/[\.\[\]]/).filter(Boolean);
-      let accessor = '';
-      for (let i = 0; i < parts.length; i++) {
-        if (i === 0) accessor = 'item?.' + parts[i];
-        else accessor += /^\d+$/.test(parts[i]) ? '?.[' + parts[i] + ']' : '?.' + parts[i];
-      }
-      return '      "' + path + '": ' + accessor;
-    }).join(',\n');
+    const fields = cleanPaths.map((path) => '      "' + path + '": ' + toItemAccessor(path)).join(',\n');
 
     const extraFields = nonBodyPaths.map((path) => `      "${path}": helpers.get("${path}")`).join(',\n');
     const mergedFields = [fields, extraFields].filter((part) => part.trim() !== '').join(',\n');
@@ -1009,6 +1141,194 @@ function extractEndpointRuntimeParams(url: string): Array<{ name: string; kind: 
   ];
 }
 
+function renameDuplicateEndpointParams(endpoint: string, existingEndpoints: string[]): string {
+  const usedNames = new Set<string>();
+  existingEndpoints.forEach((existingEndpoint) => {
+    extractEndpointRuntimeParams(existingEndpoint).forEach((param) => usedNames.add(param.name));
+  });
+
+  const renameMap = new Map<string, string>();
+  const reservedNames = new Set<string>(usedNames);
+
+  extractEndpointRuntimeParams(endpoint).forEach((param) => {
+    const baseName = param.name;
+    if (!reservedNames.has(baseName)) {
+      renameMap.set(baseName, baseName);
+      reservedNames.add(baseName);
+      return;
+    }
+
+    let candidate = baseName;
+    let suffix = 1;
+    while (reservedNames.has(candidate) || renameMap.has(candidate)) {
+      candidate = `${baseName}${suffix}`;
+      suffix += 1;
+    }
+
+    renameMap.set(baseName, candidate);
+    reservedNames.add(candidate);
+  });
+
+  if (renameMap.size === 0) {
+    return endpoint;
+  }
+
+  let renamedEndpoint = endpoint.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, (match, name: string) => {
+    const nextName = renameMap.get(name);
+    return nextName && nextName !== name ? match.replace(name, nextName) : match;
+  });
+
+  renamedEndpoint = renamedEndpoint.replace(genericPlaceholderPattern, (match, rawToken: string) => {
+    const token = rawToken.trim();
+    const nextName = renameMap.get(token);
+    return nextName && nextName !== token ? `{{${nextName}}}` : match;
+  });
+
+  return renamedEndpoint;
+}
+
+function syncMatchingParamValuesAcrossTuples(
+  runtimeMap: Record<string, Record<string, string>>,
+  pathMap: Record<string, Record<string, string>>,
+  overrides?: Record<string, string>,
+): { runtimeParamsByTupleId: Record<string, Record<string, string>>; pathParamValues: Record<string, Record<string, string>> } {
+  const nextRuntime = { ...runtimeMap };
+  const nextPath = { ...pathMap };
+  const authoritativeValues = new Map<string, string>();
+
+  Object.entries(overrides ?? {}).forEach(([name, value]) => {
+    if (value !== undefined && value !== '') {
+      authoritativeValues.set(name, value);
+    }
+  });
+
+  if (authoritativeValues.size === 0) {
+    Object.values(nextRuntime).forEach((params) => {
+      Object.entries(params).forEach(([name, value]) => {
+        if (value !== undefined && value !== '') {
+          authoritativeValues.set(name, value);
+        }
+      });
+    });
+
+    Object.values(nextPath).forEach((params) => {
+      Object.entries(params).forEach(([name, value]) => {
+        if (value !== undefined && value !== '') {
+          authoritativeValues.set(name, value);
+        }
+      });
+    });
+  }
+
+  Object.keys(nextRuntime).forEach((tupleIdKey) => {
+    const params = nextRuntime[tupleIdKey] ?? {};
+    const updated = { ...params };
+    Object.keys(updated).forEach((name) => {
+      const value = authoritativeValues.get(name);
+      if (value !== undefined) {
+        updated[name] = value;
+      }
+    });
+    nextRuntime[tupleIdKey] = updated;
+  });
+
+  Object.keys(nextPath).forEach((endpointKey) => {
+    const params = nextPath[endpointKey] ?? {};
+    const updated = { ...params };
+    Object.keys(updated).forEach((name) => {
+      const value = authoritativeValues.get(name);
+      if (value !== undefined) {
+        updated[name] = value;
+      }
+    });
+    nextPath[endpointKey] = updated;
+  });
+
+  return {
+    runtimeParamsByTupleId: nextRuntime,
+    pathParamValues: nextPath,
+  };
+}
+
+function reconcileEditedEndpointParamValues(
+  previousEndpoint: string,
+  nextEndpoint: string,
+  currentParams: Record<string, string>,
+  tupleId: string | null,
+  runtimeParamsByTupleId: Record<string, Record<string, string>>,
+  pathParamValues: Record<string, Record<string, string>>,
+): Record<string, string> {
+  const previousTokens = extractEndpointRuntimeParams(previousEndpoint).map((param) => param.name);
+  const nextTokens = extractEndpointRuntimeParams(nextEndpoint).map((param) => param.name);
+  const nextParams = { ...currentParams };
+
+  const findMatchingValue = (token: string): string | undefined => {
+    if (nextParams[token] !== undefined && nextParams[token] !== '') {
+      return nextParams[token];
+    }
+
+    for (const [candidateTupleId, candidateParams] of Object.entries(runtimeParamsByTupleId)) {
+      if (candidateTupleId === tupleId) {
+        continue;
+      }
+
+      const candidateValue = candidateParams[token];
+      if (candidateValue !== undefined && candidateValue !== '') {
+        return candidateValue;
+      }
+    }
+
+    for (const candidateParams of Object.values(pathParamValues)) {
+      const candidateValue = candidateParams[token];
+      if (candidateValue !== undefined && candidateValue !== '') {
+        return candidateValue;
+      }
+    }
+
+    return undefined;
+  };
+
+  for (let index = 0; index < Math.max(previousTokens.length, nextTokens.length); index += 1) {
+    const previousToken = previousTokens[index];
+    const nextToken = nextTokens[index];
+
+    if (!previousToken || !nextToken) {
+      continue;
+    }
+
+    if (previousToken === nextToken) {
+      if (nextParams[nextToken] === undefined && previousToken in nextParams) {
+        const recovered = findMatchingValue(nextToken);
+        if (recovered !== undefined) {
+          nextParams[nextToken] = recovered;
+        }
+      }
+      continue;
+    }
+
+    if (nextParams[nextToken] !== undefined && nextParams[nextToken] !== '') {
+      delete nextParams[previousToken];
+      continue;
+    }
+
+    const recoveredValue = findMatchingValue(nextToken);
+    if (recoveredValue !== undefined) {
+      nextParams[nextToken] = recoveredValue;
+    } else {
+      delete nextParams[previousToken];
+      delete nextParams[nextToken];
+    }
+  }
+
+  for (const key of Object.keys(nextParams)) {
+    if (!nextTokens.includes(key) && !previousTokens.includes(key)) {
+      delete nextParams[key];
+    }
+  }
+
+  return nextParams;
+}
+
 function parseParameterGroupBlock(blockText: string): string[] {
   const values = blockText
     .split(/\r?\n/)
@@ -1040,7 +1360,7 @@ function buildEndpointParamAssignmentsFromRelations(
   tokenValuesByToken: Record<string, string[]>,
 ): { ok: true; assignments: Array<Record<string, string>> } | { ok: false; message: string } {
   if (relations.length === 0) {
-    return { ok: false, message: 'Anade al menos una relacion de parametros para generar tuplas.' };
+    return { ok: false, message: 'Añade al menos una relacion de parametros para generar tuplas.' };
   }
 
   let assignments: Array<Record<string, string>> = [{}];
@@ -1050,7 +1370,7 @@ function buildEndpointParamAssignmentsFromRelations(
     if (relation.sourceToken === relation.targetToken) {
       return {
         ok: false,
-        message: `La relacion {{${relation.sourceToken}}} -> {{${relation.targetToken}}} no es valida: origen y destino son iguales.`,
+        message: `La relacion {{${relation.sourceToken}}} -> {{${relation.targetToken}}} no es válida: origen y destino son iguales.`,
       };
     }
 
@@ -1119,7 +1439,7 @@ function buildEndpointParamAssignmentsFromRelations(
   });
 
   if (deduped.length === 0) {
-    return { ok: false, message: 'No se pudieron construir combinaciones de parametros con la configuracion actual.' };
+    return { ok: false, message: 'No se pudieron construir combinaciones de parámetros con la configuración actual.' };
   }
 
   return { ok: true, assignments: deduped };
@@ -1441,34 +1761,7 @@ function getMatchingFavoriteBaseEndpoints(query: string, favorites: FavoriteBase
       }
 
       return left.name.localeCompare(right.name);
-    })
-    .slice(0, MAX_BASE_ENDPOINT_MATCHES);
-}
-
-function hasMoreFavoriteBaseEndpointMatches(query: string, favorites: FavoriteBaseEndpointEntry[]): boolean {
-  const normalizedQuery = normalizeFavoriteBaseEndpoint(query).toLowerCase();
-  if (normalizedQuery.length < 1) {
-    return false;
-  }
-
-  const queryTokens = normalizedQuery.split(/\s+/).filter((token) => token.length > 0);
-  let matchCount = 0;
-
-  for (const favorite of favorites) {
-    const searchableText = `${favorite.baseUrl} ${favorite.name} ${favorite.description}`.toLowerCase();
-    const matches = queryTokens.every((token) => searchableText.includes(token));
-
-    if (!matches) {
-      continue;
-    }
-
-    matchCount += 1;
-    if (matchCount > MAX_BASE_ENDPOINT_MATCHES) {
-      return true;
-    }
-  }
-
-  return false;
+    });
 }
 
 function getMatchingFavoriteCommands(query: string, favorites: FavoriteCommandEntry[]): FavoriteCommandEntry[] {
@@ -1500,8 +1793,7 @@ function getMatchingFavoriteCommands(query: string, favorites: FavoriteCommandEn
       }
 
       return left.name.localeCompare(right.name);
-    })
-    .slice(0, 8);
+    });
 }
 
 function createFavoriteRequestName(method: HttpMethod, url: string): string {
@@ -2167,6 +2459,15 @@ function App() {
       return false;
     }
   });
+  const [appLanguage, setAppLanguage] = useState<AppLanguage>(() => resolveInitialLanguage());
+  const [selectedThemePalette, setSelectedThemePalette] = useState<ThemePaletteId>(() => {
+    try {
+      const stored = window.localStorage.getItem(THEME_PALETTE_PREF_STORAGE_KEY);
+      return isThemePaletteId(stored) ? stored : 'default';
+    } catch {
+      return 'default';
+    }
+  });
   const [allowInsecureTls, setAllowInsecureTls] = useState(() => {
     try {
       const stored = window.localStorage.getItem(TLS_PREF_STORAGE_KEY);
@@ -2191,6 +2492,14 @@ function App() {
   const [isCommandEndpointFocused, setIsCommandEndpointFocused] = useState(false);
   const [hideBaseEndpointMatchesUntilEdit, setHideBaseEndpointMatchesUntilEdit] = useState(false);
   const [hideCommandMatchesUntilEdit, setHideCommandMatchesUntilEdit] = useState(false);
+  const [showSettingsDialog, setShowSettingsDialog] = useState(false);
+  const [showFavoriteCommandsListInComposer, setShowFavoriteCommandsListInComposer] = useState(() => {
+    try {
+      return window.localStorage.getItem(SHOW_COMPOSER_FAVORITES_LIST_PREF_STORAGE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [selectedFavoriteCommandIdsOrdered, setSelectedFavoriteCommandIdsOrdered] = useState<string[]>([]);
   const [showFavoriteCommandsSelector, setShowFavoriteCommandsSelector] = useState(false);
   const [expandedGetResponsesByKey, setExpandedGetResponsesByKey] = useState<Record<string, boolean>>({});
@@ -2239,21 +2548,25 @@ function App() {
   const [pathParamValues, setPathParamValues] = useState<Record<string, Record<string, string>>>({});
   const [endpointRuntimeParamsByTupleId, setEndpointRuntimeParamsByTupleId] = useState<Record<string, Record<string, string>>>({});
   const [endpointRawBodiesByTupleId, setEndpointRawBodiesByTupleId] = useState<Record<string, string>>({});
+  const [autoRenameDuplicateParams, setAutoRenameDuplicateParams] = useState(false);
   const [endpointParamGroupDialog, setEndpointParamGroupDialog] = useState<EndpointParamGroupDialogState | null>(null);
   const [postResponseColumnNameDrafts, setPostResponseColumnNameDrafts] = useState<Record<string, Record<string, string>>>({});
   const [postResponseColumnOrders, setPostResponseColumnOrders] = useState<Record<string, string[]>>({});
-  const [postResponseTableFilters, setPostResponseTableFilters] = useState<Record<string, { columnKey: string; value: string }>>({});
+  const [postResponseTableFilters, setPostResponseTableFilters] = useState<Record<string, PostResponseTableFilterState[]>>({});
+  const [postResponseTableSorts, setPostResponseTableSorts] = useState<Record<string, PostResponseTableSortState | null>>({});
   const [draggedColumnInfo, setDraggedColumnInfo] = useState<{ scriptId: string; columnKey: string } | null>(null);
   const [descriptionDraft, setDescriptionDraft] = useState('');
   const [showBasicAuthFieldErrors, setShowBasicAuthFieldErrors] = useState(false);
   const [authSelectionSource, setAuthSelectionSource] = useState<AuthSelectionSource>(null);
   const [skipConfirmSessionKeys, setSkipConfirmSessionKeys] = useState<string[]>([]);
   const [skipCurrentDialogForSession, setSkipCurrentDialogForSession] = useState(false);
+  const [resultDetailsContextMenu, setResultDetailsContextMenu] = useState<ResultDetailsContextMenuState | null>(null);
 
   const stopRequestedRef = useRef(false);
   const secretValueRef = useRef<HTMLInputElement | null>(null);
   const sliderRef = useRef<HTMLDivElement | null>(null);
   const resultsPanelRef = useRef<HTMLElement | null>(null);
+  const endpointTupleEditSnapshotRef = useRef<Record<string, string>>({});
   const historyImportInputRef = useRef<HTMLInputElement | null>(null);
   const favoriteRequestsImportInputRef = useRef<HTMLInputElement | null>(null);
   const favoriteBaseEndpointsImportInputRef = useRef<HTMLInputElement | null>(null);
@@ -2268,6 +2581,7 @@ function App() {
   const selectedPostEndpoint = postEndpointTuples[selectedPostEndpointIndex] ?? '';
   const focusedPostEndpoint = focusedPostEndpointIndex === null ? '' : (postEndpointTuples[focusedPostEndpointIndex] ?? '');
   const selectedPostEndpointTupleId = postEndpointTupleIds[selectedPostEndpointIndex] ?? '';
+  const hasComposerTemplateParams = extractPlaceholders(commandEndpoint, baseEndpoint).length > 0;
   const previewRow = rows[selectedRowIndex] ?? null;
   const previewRawBody = previewRow
     ? (resolveRawBodyForEndpoint(selectedPostEndpoint || endpoint).trim()
@@ -2299,18 +2613,39 @@ function App() {
     () => favoriteCommands.filter((entry) => entry.environment === favoriteEnvironment && entry.method === 'GET'),
     [favoriteCommands, favoriteEnvironment],
   );
+  const selectedThemePaletteOption = useMemo(
+    () => THEME_PALETTE_OPTIONS.find((palette) => palette.id === selectedThemePalette) ?? THEME_PALETTE_OPTIONS[0],
+    [selectedThemePalette],
+  );
+  const appLanguageOptions = useMemo(() => listSupportedLanguages(), []);
+  const t = (text: string) => translateUiText(appLanguage, text);
   const baseEndpointMatches = useMemo(
     () => getMatchingFavoriteBaseEndpoints(baseEndpoint, contextualFavoriteBaseEndpoints),
-    [baseEndpoint, contextualFavoriteBaseEndpoints],
-  );
-  const hasMaxBaseEndpointMatches = useMemo(
-    () => hasMoreFavoriteBaseEndpointMatches(baseEndpoint, contextualFavoriteBaseEndpoints),
     [baseEndpoint, contextualFavoriteBaseEndpoints],
   );
   const commandMatches = useMemo(
     () => getMatchingFavoriteCommands(commandEndpoint, contextualFavoriteCommands),
     [commandEndpoint, contextualFavoriteCommands],
   );
+  const hasVisibleBaseEndpointMatches = useMemo(() => (
+    isBaseEndpointFocused
+    && !hideBaseEndpointMatchesUntilEdit
+    && baseEndpointMatches.length > 0
+  ), [
+    isBaseEndpointFocused,
+    hideBaseEndpointMatchesUntilEdit,
+    baseEndpointMatches,
+  ]);
+  const hasVisibleCommandMatches = useMemo(() => (
+    isCommandEndpointFocused
+    && !hideCommandMatchesUntilEdit
+    && commandMatches.length > 0
+  ), [
+    isCommandEndpointFocused,
+    hideCommandMatchesUntilEdit,
+    commandMatches,
+  ]);
+  const isComposerSuggestionsVisible = hasVisibleBaseEndpointMatches || hasVisibleCommandMatches;
   const selectedFavoriteCommandsOrdered = useMemo(
     () => selectedFavoriteCommandIdsOrdered
       .map((id) => contextualFavoriteCommands.find((entry) => entry.id === id) ?? null)
@@ -2510,6 +2845,39 @@ function App() {
     return issues;
   }, [authorizationScheme, basicAuthPasswordSecretKey, basicAuthUsernameSecretKey, bodyMode, bodyTemplateText, endpoint, headersText, method, queryText, rawBodyText, rows.length, selectedGetEndpoint, selectedPostEndpoint]);
 
+  const preflightStatus = useMemo<PreflightStatusSummary>(() => {
+    const warningIssues = preflightIssues.filter((issue) => issue.includes('body RAW vacio'));
+    const blockingIssues = preflightIssues.filter((issue) => !issue.includes('body RAW vacio'));
+
+    if (blockingIssues.length > 0) {
+      return {
+        tone: 'error',
+        label: `${blockingIssues.length} error(es)` ,
+        helperText: 'Hay problemas bloqueantes que debes corregir antes del envio.',
+        blockingIssues,
+        warningIssues,
+      };
+    }
+
+    if (warningIssues.length > 0) {
+      return {
+        tone: 'warning',
+        label: `${warningIssues.length} aviso(s)`,
+        helperText: 'Puedes enviar, pero conviene revisar los avisos detectados.',
+        blockingIssues,
+        warningIssues,
+      };
+    }
+
+    return {
+      tone: 'success',
+      label: 'Lista para enviar',
+      helperText: 'La configuracion actual no muestra errores obvios antes del envio.',
+      blockingIssues,
+      warningIssues,
+    };
+  }, [preflightIssues]);
+
   useEffect(() => {
     if (!window.postais?.listSecrets) {
       setSecretsHydrated(true);
@@ -2623,13 +2991,93 @@ function App() {
   useEffect(() => {
     const theme = isNightMode ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', theme);
+    document.documentElement.setAttribute('data-theme-palette', selectedThemePalette);
 
     try {
       window.localStorage.setItem(THEME_PREF_STORAGE_KEY, theme);
+      window.localStorage.setItem(THEME_PALETTE_PREF_STORAGE_KEY, selectedThemePalette);
     } catch {
       // Ignore persistence failures (private mode / restricted storage).
     }
-  }, [isNightMode]);
+
+    const overlayColor = isNightMode ? '#07091c' : '#1b1f5c';
+    const symbolColor = isNightMode ? '#c8d0ff' : '#e8ecff';
+    const postais = (window as Window & typeof globalThis & { postais?: { setTitleBarOverlay?: (o: object) => void } }).postais;
+    postais?.setTitleBarOverlay?.({ color: overlayColor, symbolColor, height: 38 });
+  }, [isNightMode, selectedThemePalette]);
+
+  useEffect(() => {
+    let currentZoom = 1;
+    const ZOOM_STEP = 0.1;
+
+    const handleWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      currentZoom = currentZoom + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP);
+      currentZoom = Math.min(3.0, Math.max(0.25, Math.round(currentZoom * 10) / 10));
+      const postais = (window as Window & typeof globalThis & { postais?: { setZoom?: (f: number) => void } }).postais;
+      postais?.setZoom?.(currentZoom);
+    };
+
+    const initZoom = async () => {
+      const postais = (window as Window & typeof globalThis & { postais?: { getZoom?: () => Promise<number> } }).postais;
+      const factor = await postais?.getZoom?.();
+      if (factor) currentZoom = factor;
+    };
+
+    void initZoom();
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    return () => window.removeEventListener('wheel', handleWheel);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('lang', appLanguage);
+
+    try {
+      window.localStorage.setItem(APP_LANGUAGE_PREF_STORAGE_KEY, appLanguage);
+    } catch {
+      // Ignore persistence failures (private mode / restricted storage).
+    }
+
+    const rootNode = document.getElementById('root');
+    if (!rootNode) {
+      return;
+    }
+
+    applyTranslationsToSubtree(rootNode, appLanguage);
+
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === 'childList') {
+          mutation.addedNodes.forEach((node) => {
+            applyTranslationsToMutation(node, appLanguage);
+          });
+          continue;
+        }
+
+        if (mutation.type === 'characterData' && mutation.target) {
+          applyTranslationsToMutation(mutation.target, appLanguage);
+          continue;
+        }
+
+        if (mutation.type === 'attributes' && mutation.target) {
+          applyTranslationsToMutation(mutation.target, appLanguage);
+        }
+      }
+    });
+
+    observer.observe(rootNode, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['placeholder', 'title', 'aria-label'],
+    });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [appLanguage]);
 
   useEffect(() => {
     try {
@@ -2699,6 +3147,22 @@ function App() {
       // Ignore persistence failures (private mode / restricted storage).
     }
   }, [favoriteEnvironment]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SHOW_COMPOSER_FAVORITES_LIST_PREF_STORAGE_KEY, showFavoriteCommandsListInComposer ? 'true' : 'false');
+    } catch {
+      // Ignore persistence failures (private mode / restricted storage).
+    }
+  }, [showFavoriteCommandsListInComposer]);
+
+  useEffect(() => {
+    if (showFavoriteCommandsListInComposer) {
+      return;
+    }
+
+    setShowFavoriteCommandsSelector(false);
+  }, [showFavoriteCommandsListInComposer]);
 
   useEffect(() => {
     setFavoriteBaseEndpointDraft((current) => ({ ...current, environment: favoriteEnvironment }));
@@ -3042,7 +3506,13 @@ function App() {
       return;
     }
 
-    const endpointsToApply = composedEndpointsFromSelection;
+    const existingEndpointsForMode = method === 'GET' ? getEndpointTuples : postEndpointTuples;
+    const endpointsToApply = (autoRenameDuplicateParams && mode === 'add')
+      ? composedEndpointsFromSelection.map((endpoint, endpointIndex, allEndpoints) => {
+        const priorGenerated = allEndpoints.slice(0, endpointIndex);
+        return renameDuplicateEndpointParams(endpoint, [...existingEndpointsForMode, ...priorGenerated]);
+      })
+      : composedEndpointsFromSelection;
     const firstComposedEndpoint = endpointsToApply[0] ?? '';
     const firstSelectedCommand = selectedFavoriteCommandsOrdered[0];
     const defaultRawFromCommand = firstSelectedCommand?.method === 'POST' && method === 'POST' ? (firstSelectedCommand.defaultRawBody ?? '') : '';
@@ -3170,17 +3640,28 @@ function App() {
       return false;
     }
 
+    const commandHasQuery = normalizedCommand.includes('?');
+
+    // Build a regex that treats {{placeholder}} tokens as wildcards matching any URL segment value
+    const commandSegments = normalizedCommand.split(/\{\{[^}]+\}\}/);
+    const commandRegex = new RegExp(
+      commandSegments.map((seg) => seg.replace(/[.+^${}()|[\]\\]/g, '\\$&')).join('[^/?#&]+')
+    );
+
     const candidates = [result.finalUrl, result.requestPreview.url]
       .map((value) => value.trim())
       .filter((value) => value !== '');
 
     return candidates.some((urlValue) => {
       try {
-        const pathname = new URL(urlValue).pathname.replace(/\/+$/, '');
-        return pathname.endsWith(normalizedCommand) || pathname.includes(normalizedCommand);
+        const parsedUrl = new URL(urlValue);
+        const pathname = parsedUrl.pathname.replace(/\/+$/, '');
+        const pathnameWithQuery = (parsedUrl.pathname + parsedUrl.search).replace(/\/+$/, '');
+        const target = commandHasQuery ? pathnameWithQuery : pathname;
+        return target.endsWith(normalizedCommand) || target.includes(normalizedCommand) || commandRegex.test(target);
       } catch {
         const normalizedUrl = urlValue.replace(/\/+$/, '');
-        return normalizedUrl.endsWith(normalizedCommand) || normalizedUrl.includes(normalizedCommand);
+        return normalizedUrl.endsWith(normalizedCommand) || normalizedUrl.includes(normalizedCommand) || commandRegex.test(normalizedUrl);
       }
     });
   }
@@ -3211,7 +3692,8 @@ function App() {
 
   function generateSampleScriptForCommand(commandEntry: FavoriteCommandEntry, responseContext: PostResponseScriptContext) {
     const suggestedPaths = createPostResponseSuggestedPaths(responseContext);
-    if (suggestedPaths.length === 0) {
+    const isPlainTextBody = typeof responseContext.body === 'string' && responseContext.body.trim().length > 0;
+    if (suggestedPaths.length === 0 && !isPlainTextBody) {
       setStatusMessage('No se encontraron campos estructurados para generar un sample de script.');
       return;
     }
@@ -3592,6 +4074,71 @@ function App() {
     setExpandedGetResponsesByKey((current) => ({ ...current, [key]: !current[key] }));
   }
 
+  function openResultDetailsContextMenu(event: React.MouseEvent<HTMLElement>) {
+    event.preventDefault();
+    const detailsElement = event.currentTarget instanceof HTMLDetailsElement
+      ? event.currentTarget
+      : event.currentTarget.closest('details');
+    if (!(detailsElement instanceof HTMLDetailsElement)) {
+      return;
+    }
+
+    setResultDetailsContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      detailsElement,
+      isExpanded: detailsElement.open,
+    });
+  }
+
+  function closeResultDetailsContextMenu() {
+    setResultDetailsContextMenu(null);
+  }
+
+  function toggleResultDetailsFromContextMenu() {
+    if (!resultDetailsContextMenu) {
+      return;
+    }
+
+    resultDetailsContextMenu.detailsElement.open = !resultDetailsContextMenu.detailsElement.open;
+    closeResultDetailsContextMenu();
+  }
+
+  function collapseResultDetailsFromContextMenu() {
+    if (!resultDetailsContextMenu) {
+      return;
+    }
+
+    resultDetailsContextMenu.detailsElement.open = false;
+    closeResultDetailsContextMenu();
+  }
+
+  function collapseResultDetails(event: React.MouseEvent<HTMLButtonElement>) {
+    const detailsElement = event.currentTarget.closest('details');
+    if (!(detailsElement instanceof HTMLDetailsElement)) {
+      return;
+    }
+
+    detailsElement.open = false;
+  }
+
+  useEffect(() => {
+    if (!resultDetailsContextMenu) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeResultDetailsContextMenu();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [resultDetailsContextMenu]);
+
   async function copyAllResultsToClipboard() {
     if (results.length === 0) {
       setStatusMessage('No hay respuestas para copiar.');
@@ -3642,6 +4189,129 @@ function App() {
     const statusText = (result.statusText ?? '').toLowerCase();
     const errorDetail = (result.errorDetail ?? '').toLowerCase();
     return statusText.includes('unauthorized') || errorDetail.includes('unauthorized');
+  }
+
+  function getHttpStatusUserHint(status: number, statusText?: string): string {
+    const isEnglish = appLanguage === 'en';
+    const statusLabel = statusText?.trim() ? `${status} ${statusText}` : `${status}`;
+
+    switch (status) {
+      case 200:
+        return isEnglish
+          ? `${statusLabel}: OK. The request was processed successfully.`
+          : `${statusLabel}: OK. La solicitud se procesó correctamente.`;
+      case 201:
+        return isEnglish
+          ? `${statusLabel}: Resource created successfully.`
+          : `${statusLabel}: Recurso creado correctamente.`;
+      case 202:
+        return isEnglish
+          ? `${statusLabel}: Request accepted for processing.`
+          : `${statusLabel}: Solicitud aceptada para procesado.`;
+      case 204:
+        return isEnglish
+          ? `${statusLabel}: Success, no content in response.`
+          : `${statusLabel}: Correcto, sin contenido en la respuesta.`;
+      case 301:
+      case 302:
+      case 307:
+      case 308:
+        return isEnglish
+          ? `${statusLabel}: Redirect. Resource is available at another URL.`
+          : `${statusLabel}: Redirección. El recurso se encuentra en otra URL.`;
+      case 400:
+        return isEnglish
+          ? `${statusLabel}: Bad Request. Request has invalid or incomplete data.`
+          : `${statusLabel}: Bad Request. La petición tiene datos inválidos o incompletos.`;
+      case 401:
+        return isEnglish
+          ? `${statusLabel}: Unauthorized. Missing authentication or invalid credentials.`
+          : `${statusLabel}: Unauthorized. Falta autenticación o las credenciales no son válidas.`;
+      case 403:
+        return isEnglish
+          ? `${statusLabel}: Forbidden. Server understood the request but access is not authorized.`
+          : `${statusLabel}: Forbidden. El servidor entiende la petición pero el acceso no está autorizado.`;
+      case 404:
+        return isEnglish
+          ? `${statusLabel}: Not Found. Requested resource or endpoint does not exist.`
+          : `${statusLabel}: Not Found. El recurso o endpoint solicitado no existe.`;
+      case 408:
+        return isEnglish
+          ? `${statusLabel}: Timeout. Server took too long to respond.`
+          : `${statusLabel}: Timeout. El servidor tardó demasiado en responder.`;
+      case 409:
+        return isEnglish
+          ? `${statusLabel}: Conflict. Operation conflicts with current resource state.`
+          : `${statusLabel}: Conflict. La operación entra en conflicto con el estado actual del recurso.`;
+      case 422:
+        return isEnglish
+          ? `${statusLabel}: Unprocessable Entity. Format is valid, but data does not pass validation.`
+          : `${statusLabel}: Unprocessable Entity. El formato es válido, pero los datos no pasan la validación.`;
+      case 429:
+        return isEnglish
+          ? `${statusLabel}: Too Many Requests. Request rate limit exceeded.`
+          : `${statusLabel}: Too Many Requests. Se superó el límite de solicitudes permitido.`;
+      case 500:
+        return isEnglish
+          ? `${statusLabel}: Internal Server Error. Server encountered an unexpected error.`
+          : `${statusLabel}: Internal Server Error. El servidor encontró un error inesperado.`;
+      case 502:
+        return isEnglish
+          ? `${statusLabel}: Bad Gateway. Communication error between intermediate servers.`
+          : `${statusLabel}: Bad Gateway. Error de comunicación entre servidores intermedios.`;
+      case 503:
+        return isEnglish
+          ? `${statusLabel}: Service Unavailable. Service is temporarily unavailable.`
+          : `${statusLabel}: Service Unavailable. El servicio no está disponible temporalmente.`;
+      case 504:
+        return isEnglish
+          ? `${statusLabel}: Gateway Timeout. Intermediate server did not receive a response in time.`
+          : `${statusLabel}: Gateway Timeout. Un servidor intermedio no recibió respuesta a tiempo.`;
+      default:
+        break;
+    }
+
+    if (status >= 200 && status < 300) {
+      return isEnglish ? `${statusLabel}: Successful response.` : `${statusLabel}: Respuesta correcta.`;
+    }
+
+    if (status >= 300 && status < 400) {
+      return isEnglish
+        ? `${statusLabel}: Redirect. You may need to follow another URL.`
+        : `${statusLabel}: Redirección. Es posible que se deba seguir otra URL.`;
+    }
+
+    if (status >= 400 && status < 500) {
+      return isEnglish
+        ? `${statusLabel}: Client error. Check URL, credentials, and sent data.`
+        : `${statusLabel}: Error de cliente. Revisa URL, credenciales y datos enviados.`;
+    }
+
+    if (status >= 500) {
+      return isEnglish
+        ? `${statusLabel}: Server error. Try again later or review service logs.`
+        : `${statusLabel}: Error de servidor. Intenta más tarde o revisa logs del servicio.`;
+    }
+
+    return isEnglish
+      ? `${statusLabel}: Could not classify HTTP status.`
+      : `${statusLabel}: No se pudo clasificar el estado HTTP.`;
+  }
+
+  function getResultTone(result: Pick<DispatchResult, 'status' | 'ok'>): 'ok' | 'warn' | 'error' {
+    if (result.status >= 200 && result.status < 300) {
+      return 'ok';
+    }
+
+    if (result.status >= 300 && result.status < 400) {
+      return 'warn';
+    }
+
+    if (result.ok) {
+      return 'ok';
+    }
+
+    return 'error';
   }
 
   function renderEndpointMatches(
@@ -3716,7 +4386,6 @@ function App() {
         <div className="endpoint-favorites-block">
           <div className="endpoint-favorites-header">
             <span className="muted-small">Coincidencias endpoint base</span>
-            {hasMaxBaseEndpointMatches ? <span className="match-limit-indicator">MAX</span> : null}
           </div>
           <div className={`endpoint-favorites-scroll${baseEndpointMatches.length >= 3 ? ' endpoint-favorites-scroll-min' : ''}`}>
             {baseEndpointMatches.map((entry) => (
@@ -3729,8 +4398,8 @@ function App() {
                 title={entry.baseUrl}
               >
                 <span>{entry.name}</span>
-                {entry.description ? <span className="favorite-match-url">{entry.description}</span> : null}
-                <span className="favorite-match-url">{entry.baseUrl}</span>
+                {entry.description ? <span className="favorite-match-url favorite-match-description">{entry.description}</span> : null}
+                <span className="favorite-match-url favorite-match-command">{entry.baseUrl}</span>
               </button>
             ))}
           </div>
@@ -3767,11 +4436,30 @@ function App() {
                 title={entry.command}
               >
                 <span>{entry.name}</span>
-                {entry.description ? <span className="favorite-match-url">{entry.description}</span> : null}
-                <span className="favorite-match-url">{entry.command}</span>
+                {entry.description ? <span className="favorite-match-url favorite-match-description">{entry.description}</span> : null}
+                <span className="favorite-match-url favorite-match-command">{entry.command}</span>
               </button>
             ))}
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  function renderComposerMatchesPanel() {
+    const baseMatchesNode = renderBaseEndpointMatches();
+    const commandMatchesNode = renderCommandMatches();
+
+    if (!baseMatchesNode && !commandMatchesNode) {
+      return null;
+    }
+
+    return (
+      <div className="field stretch-full endpoint-composer-suggestions-panel">
+        <span>Coincidencias del constructor</span>
+        <div className="endpoint-composer-matches" aria-live="polite">
+          {baseMatchesNode}
+          {commandMatchesNode}
         </div>
       </div>
     );
@@ -3860,8 +4548,32 @@ function App() {
   }
 
   function updatePostEndpoint(value: string) {
-    setPostEndpointTuples((current) => current.map((item, itemIndex) => (itemIndex === selectedPostEndpointIndex ? value : item)));
-    setEndpoint(value);
+    const previousValue = postEndpointTuples[selectedPostEndpointIndex] ?? '';
+    const tupleId = postEndpointTupleIds[selectedPostEndpointIndex] ?? '';
+    const preparedValue = value;
+
+    const nextRuntimeParams = reconcileEditedEndpointParamValues(
+      previousValue,
+      preparedValue,
+      tupleId ? (endpointRuntimeParamsByTupleId[tupleId] ?? pathParamValues[previousValue] ?? {}) : (pathParamValues[previousValue] ?? {}),
+      tupleId || null,
+      endpointRuntimeParamsByTupleId,
+      pathParamValues,
+    );
+
+    const nextRuntime = tupleId
+      ? { ...endpointRuntimeParamsByTupleId, [tupleId]: nextRuntimeParams }
+      : endpointRuntimeParamsByTupleId;
+    const nextPath = tupleId
+      ? pathParamValues
+      : { ...pathParamValues, [preparedValue]: nextRuntimeParams };
+
+    const syncedState = syncMatchingParamValuesAcrossTuples(nextRuntime, nextPath);
+
+    setPostEndpointTuples((current) => current.map((item, itemIndex) => (itemIndex === selectedPostEndpointIndex ? preparedValue : item)));
+    setEndpointRuntimeParamsByTupleId(syncedState.runtimeParamsByTupleId);
+    setPathParamValues(syncedState.pathParamValues);
+    setEndpoint(preparedValue);
     setHidePostEndpointMatchesByIndex((current) => ({ ...current, [selectedPostEndpointIndex]: false }));
   }
 
@@ -4063,7 +4775,46 @@ function App() {
       ? assignments.length
       : groupedValues.length;
     const newTupleIds = Array.from({ length: generationCount }, () => createHistoryId());
-    const newEndpoints = Array.from({ length: generationCount }, () => sourceEndpoint);
+
+    // Give each generated tuple a unique parameter name to prevent cross-tuple value sync.
+    const currentEndpointsForMethod = endpointParamGroupDialog.targetMethod === 'GET' ? getEndpointTuples : postEndpointTuples;
+    const contextEndpoints = shouldDropSourceTuple
+      ? currentEndpointsForMethod.filter((_, idx) => idx !== sourceIndex)
+      : [...currentEndpointsForMethod];
+    const newEndpoints: string[] = [];
+    for (let i = 0; i < generationCount; i++) {
+      newEndpoints.push(renameDuplicateEndpointParams(sourceEndpoint, [...contextEndpoints, ...newEndpoints]));
+    }
+
+    // Capture dialog state for use inside closures (TypeScript narrowing).
+    const dialogSnapshot = endpointParamGroupDialog;
+
+    // Build a per-tuple param map with keys matching the renamed endpoint tokens.
+    function buildGroupTupleParams(valueIndex: number): Record<string, string> {
+      const renamedEndpoint = newEndpoints[valueIndex] ?? sourceEndpoint;
+      const originalTokens = extractEndpointRuntimeParams(sourceEndpoint).map((p) => p.name);
+      const renamedTokens = extractEndpointRuntimeParams(renamedEndpoint).map((p) => p.name);
+
+      const remapped: Record<string, string> = {};
+      originalTokens.forEach((orig, i) => {
+        const key = renamedTokens[i] ?? orig;
+        remapped[key] = sourceParams[orig] ?? '';
+      });
+
+      if (dialogSnapshot.mode === 'relations' && dialogSnapshot.tokens.length >= 2) {
+        Object.entries(assignments[valueIndex] ?? {}).forEach(([orig, val]) => {
+          const idx = originalTokens.indexOf(orig);
+          const key = idx >= 0 ? (renamedTokens[idx] ?? orig) : orig;
+          remapped[key] = val;
+        });
+      } else {
+        const selIdx = originalTokens.indexOf(dialogSnapshot.selectedToken);
+        const renamedSelected = selIdx >= 0 ? (renamedTokens[selIdx] ?? dialogSnapshot.selectedToken) : dialogSnapshot.selectedToken;
+        remapped[renamedSelected] = groupedValues[valueIndex] ?? '';
+      }
+
+      return remapped;
+    }
 
     if (endpointParamGroupDialog.targetMethod === 'GET') {
       setGetEndpointTuples((current) => {
@@ -4090,11 +4841,7 @@ function App() {
         }
 
         newTupleIds.forEach((tupleId, valueIndex) => {
-          const relationAssignment = assignments[valueIndex] ?? {};
-          const nextParams = endpointParamGroupDialog.mode === 'relations' && endpointParamGroupDialog.tokens.length >= 2
-            ? { ...sourceParams, ...relationAssignment }
-            : { ...sourceParams, [endpointParamGroupDialog.selectedToken]: groupedValues[valueIndex] };
-          next[tupleId] = nextParams;
+          next[tupleId] = buildGroupTupleParams(valueIndex);
         });
 
         return next;
@@ -4144,11 +4891,7 @@ function App() {
         }
 
         newTupleIds.forEach((tupleId, valueIndex) => {
-          const relationAssignment = assignments[valueIndex] ?? {};
-          const nextParams = endpointParamGroupDialog.mode === 'relations' && endpointParamGroupDialog.tokens.length >= 2
-            ? { ...sourceParams, ...relationAssignment }
-            : { ...sourceParams, [endpointParamGroupDialog.selectedToken]: groupedValues[valueIndex] };
-          next[tupleId] = nextParams;
+          next[tupleId] = buildGroupTupleParams(valueIndex);
         });
 
         return next;
@@ -4712,15 +5455,7 @@ function App() {
       return;
     }
 
-    // Filtrar comandos por método actual para mantener relevancia
-    const commandsToExport = method === 'POST' 
-      ? favoriteCommands.filter((cmd) => cmd.method === 'POST')
-      : favoriteCommands.filter((cmd) => cmd.method === 'GET');
-
-    if (commandsToExport.length === 0) {
-      setStatusMessage(`No hay comandos favoritos ${method} para exportar.`);
-      return;
-    }
+    const commandsToExport = [...favoriteCommands];
 
     const payload: FavoriteCommandsExportFile = {
       schema: 'postais.favoriteCommands.v1',
@@ -4729,20 +5464,19 @@ function App() {
     };
 
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const methodLabel = method === 'POST' ? 'POST' : 'GET';
-    const filename = `postais-favorite-commands-${methodLabel}-${stamp}.json`;
+    const filename = `postais-favorite-commands-ALL-${stamp}.json`;
     const serialized = JSON.stringify(payload, null, 2);
 
     try {
       if (window.postais?.saveTextFile) {
         const saved = await window.postais.saveTextFile({
           suggestedName: filename,
-          title: `Exportar comandos favoritos ${methodLabel} JSON`,
+          title: 'Exportar comandos favoritos JSON',
           content: serialized,
         });
 
         if (saved.ok) {
-          setStatusMessage(`${commandsToExport.length} comando(s) favorito(s) ${methodLabel} exportados.`);
+          setStatusMessage(`${commandsToExport.length} comando(s) favorito(s) exportados (GET y POST).`);
           return;
         }
 
@@ -4755,7 +5489,7 @@ function App() {
       }
 
       triggerJsonDownload(serialized, filename);
-      setStatusMessage(`${commandsToExport.length} comando(s) favorito(s) ${methodLabel} exportados.`);
+      setStatusMessage(`${commandsToExport.length} comando(s) favorito(s) exportados (GET y POST).`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : 'No se pudieron exportar los comandos favoritos.');
     }
@@ -4783,7 +5517,7 @@ function App() {
           name: normalizeFavoriteName(item.name || createDefaultFavoriteCommandName(item.command)),
           description: normalizeRestDescription(typeof item.description === 'string' ? item.description : ''),
           command: normalizeFavoriteCommand(item.command),
-          method: method as HttpMethod,
+          method: item.method,
           defaultRawBody: typeof item.defaultRawBody === 'string' ? item.defaultRawBody : '',
           postResponseScript: typeof item.postResponseScript === 'string' ? item.postResponseScript : '',
         }))
@@ -4822,7 +5556,9 @@ function App() {
       }
 
       setFavoriteCommands((current) => [...uniqueImported, ...current]);
-      setStatusMessage(`${uniqueImported.length} comando(s) favorito(s) importados para ${method}. ${skippedDuplicates} duplicado(s) omitido(s).`);
+      const importedGet = uniqueImported.filter((entry) => entry.method === 'GET').length;
+      const importedPost = uniqueImported.filter((entry) => entry.method === 'POST').length;
+      setStatusMessage(`${uniqueImported.length} comando(s) favorito(s) importados (GET: ${importedGet}, POST: ${importedPost}). ${skippedDuplicates} duplicado(s) omitido(s).`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : 'No se pudieron importar los comandos favoritos.');
     } finally {
@@ -5290,14 +6026,48 @@ function App() {
   function renderPostResponseOutput(output: unknown, scriptStorageKey?: string) {
     if (isRecord(output) && Array.isArray(output.rows)) {
       const rows = output.rows as Array<Record<string, unknown>>;
-      const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
+      const columns = isScriptTableOutput(output)
+        ? output.columns
+        : rows.length > 0
+          ? Object.keys(rows[0])
+          : [];
       const baseColumnNames = isRecord(output.columnNames)
         ? Object.fromEntries(Object.entries(output.columnNames).map(([key, value]) => [key, String(value ?? '')])) as Record<string, string>
         : {};
       const outputColumnOrder = Array.isArray(output.columnOrder) ? output.columnOrder.filter((col) => typeof col === 'string') : [];
       const draftColumnNames = scriptStorageKey ? (postResponseColumnNameDrafts[scriptStorageKey] ?? {}) : {};
       const resolvedColumnNames = { ...baseColumnNames, ...draftColumnNames };
-      const currentTableFilter = scriptStorageKey ? (postResponseTableFilters[scriptStorageKey] ?? { columnKey: '', value: '' }) : { columnKey: '', value: '' };
+      const currentTableFilters = scriptStorageKey ? (postResponseTableFilters[scriptStorageKey] ?? [{ columnKey: '', value: '' }]) : [{ columnKey: '', value: '' }];
+      const activeTableFilters = currentTableFilters.length > 0 ? currentTableFilters : [{ columnKey: '', value: '' }];
+      const activeTableSort = scriptStorageKey ? (postResponseTableSorts[scriptStorageKey] ?? null) : null;
+
+      const normalizeCellValue = (value: unknown): string => {
+        if (value === null || value === undefined) {
+          return '';
+        }
+
+        return typeof value === 'object' ? JSON.stringify(value) : String(value);
+      };
+
+      const compareCellValues = (left: unknown, right: unknown, direction: 'asc' | 'desc'): number => {
+        const factor = direction === 'asc' ? 1 : -1;
+        const leftValue = normalizeCellValue(left);
+        const rightValue = normalizeCellValue(right);
+
+        const leftDate = Date.parse(leftValue);
+        const rightDate = Date.parse(rightValue);
+        if (!Number.isNaN(leftDate) && !Number.isNaN(rightDate)) {
+          return (leftDate - rightDate) * factor;
+        }
+
+        const leftNumber = Number(leftValue);
+        const rightNumber = Number(rightValue);
+        if (leftValue.trim() !== '' && rightValue.trim() !== '' && Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+          return (leftNumber - rightNumber) * factor;
+        }
+
+        return leftValue.localeCompare(rightValue, undefined, { numeric: true, sensitivity: 'base' }) * factor;
+      };
 
       const getColumnTooltip = (column: string): string => {
         const customName = resolvedColumnNames[column] ?? column;
@@ -5449,7 +6219,7 @@ function App() {
       const handleCopyTableToClipboard = async () => {
         try {
           const orderedCols = getOrderedColumns();
-          const tsv = tableToTsv(orderedCols, filteredRows, resolvedColumnNames);
+          const tsv = tableToTsv(orderedCols, sortedRows, resolvedColumnNames);
           await copyToClipboard(tsv);
           setStatusMessage('Tabla copiada al portapapeles. Puedes pegarla en Excel.');
         } catch (error) {
@@ -5462,121 +6232,172 @@ function App() {
         key: column,
         label: resolvedColumnNames[column] ?? column,
       }));
-      const activeFilterColumn = currentTableFilter.columnKey && orderedColumns.includes(currentTableFilter.columnKey)
-        ? currentTableFilter.columnKey
-        : '';
-      const availableFilterValues = activeFilterColumn
-        ? Array.from(new Set(rows.map((row) => {
-            const value = row[activeFilterColumn];
-            if (value === null || value === undefined) {
-              return '';
-            }
+      const setTableFiltersForScript = (updater: (filters: PostResponseTableFilterState[]) => PostResponseTableFilterState[]) => {
+        if (!scriptStorageKey) {
+          return;
+        }
 
-            return typeof value === 'object' ? JSON.stringify(value) : String(value);
-          })))
-        : [];
-      const filteredRows = activeFilterColumn && currentTableFilter.value !== ''
-        ? rows.filter((row) => {
-            const value = row[activeFilterColumn];
-            const normalizedValue = value === null || value === undefined
-              ? ''
-              : typeof value === 'object'
-                ? JSON.stringify(value)
-                : String(value);
-            return normalizedValue === currentTableFilter.value;
-          })
+        setPostResponseTableFilters((current) => {
+          const previous = current[scriptStorageKey] ?? [{ columnKey: '', value: '' }];
+          return {
+            ...current,
+            [scriptStorageKey]: updater(previous),
+          };
+        });
+      };
+
+      const getAvailableFilterValues = (columnKey: string): string[] => {
+        if (!columnKey || !orderedColumns.includes(columnKey)) {
+          return [];
+        }
+
+        return Array.from(new Set(rows.map((row) => normalizeCellValue(row[columnKey]))));
+      };
+
+      const effectiveFilters = activeTableFilters.filter(
+        (filter) => filter.columnKey && filter.value !== '' && orderedColumns.includes(filter.columnKey),
+      );
+      const filteredRows = effectiveFilters.length > 0
+        ? rows.filter((row) => effectiveFilters.every((filter) => normalizeCellValue(row[filter.columnKey]) === filter.value))
         : rows;
+      const sortedRows = activeTableSort && activeTableSort.columnKey && orderedColumns.includes(activeTableSort.columnKey)
+        ? filteredRows
+            .map((row, index) => ({ row, index }))
+            .sort((left, right) => {
+              const result = compareCellValues(
+                left.row[activeTableSort.columnKey],
+                right.row[activeTableSort.columnKey],
+                activeTableSort.direction,
+              );
+              return result !== 0 ? result : left.index - right.index;
+            })
+            .map(({ row }) => row)
+        : filteredRows;
 
       const getFilterValueLabel = (value: string): string => (value === '' ? '(vacío)' : value);
+
+      const toggleColumnSort = (column: string) => {
+        if (!scriptStorageKey) {
+          return;
+        }
+
+        setPostResponseTableSorts((current) => {
+          const existing = current[scriptStorageKey];
+          let nextSort: PostResponseTableSortState | null;
+
+          if (existing?.columnKey !== column) {
+            nextSort = { columnKey: column, direction: 'asc' };
+          } else if (existing.direction === 'asc') {
+            nextSort = { columnKey: column, direction: 'desc' };
+          } else {
+            nextSort = null;
+          }
+
+          return {
+            ...current,
+            [scriptStorageKey]: nextSort,
+          };
+        });
+      };
 
       return (
         <div className="post-response-table-container">
           <div className="post-response-table-controls">
             <div className="post-response-table-filters">
-              <label className="field compact-field post-response-table-filter-field">
-                <span>Filtrar por columna</span>
-                <select
-                  value={activeFilterColumn}
-                  onChange={(event) => {
-                    if (!scriptStorageKey) {
-                      return;
-                    }
+              {activeTableFilters.map((filter, filterIndex) => {
+                const activeFilterColumn = filter.columnKey && orderedColumns.includes(filter.columnKey)
+                  ? filter.columnKey
+                  : '';
+                const availableFilterValues = getAvailableFilterValues(activeFilterColumn);
 
-                    const nextColumnKey = event.target.value;
-                    setPostResponseTableFilters((current) => ({
-                      ...current,
-                      [scriptStorageKey]: {
-                        columnKey: nextColumnKey,
-                        value: '',
-                      },
-                    }));
-                  }}
-                >
-                  <option value="">Todas las columnas</option>
-                  {availableFilterColumns.map((column) => (
-                    <option key={`filter-column-${column.key}`} value={column.key}>
-                      {column.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                return (
+                  <div key={`table-filter-${filterIndex}`} className="post-response-table-filter-row">
+                    <label className="field compact-field post-response-table-filter-field">
+                      <span>Filtrar por columna</span>
+                      <select
+                        value={activeFilterColumn}
+                        onChange={(event) => {
+                          const nextColumnKey = event.target.value;
+                          setTableFiltersForScript((filters) => filters.map((entry, index) => (
+                            index === filterIndex
+                              ? { columnKey: nextColumnKey, value: '' }
+                              : entry
+                          )));
+                        }}
+                      >
+                        <option value="">Todas las columnas</option>
+                        {availableFilterColumns.map((column) => (
+                          <option key={`filter-column-${filterIndex}-${column.key}`} value={column.key}>
+                            {column.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
 
-              <label className="field compact-field post-response-table-filter-field">
-                <span>Filtrar por valor</span>
-                <select
-                  value={currentTableFilter.value}
-                  onChange={(event) => {
-                    if (!scriptStorageKey) {
-                      return;
-                    }
-
-                    setPostResponseTableFilters((current) => ({
-                      ...current,
-                      [scriptStorageKey]: {
-                        columnKey: activeFilterColumn,
-                        value: event.target.value,
-                      },
-                    }));
-                  }}
-                  disabled={!activeFilterColumn || availableFilterValues.length === 0}
-                >
-                  <option value="">Todos los valores</option>
-                  {availableFilterValues.map((value) => (
-                    <option key={`filter-value-${activeFilterColumn}-${value}`} value={value}>
-                      {getFilterValueLabel(value)}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                    <label className="field compact-field post-response-table-filter-field">
+                      <span>Filtrar por valor</span>
+                      <select
+                        value={filter.value}
+                        onChange={(event) => {
+                          setTableFiltersForScript((filters) => filters.map((entry, index) => (
+                            index === filterIndex
+                              ? { columnKey: activeFilterColumn, value: event.target.value }
+                              : entry
+                          )));
+                        }}
+                        disabled={!activeFilterColumn || availableFilterValues.length === 0}
+                      >
+                        <option value="">Todos los valores</option>
+                        {availableFilterValues.map((value) => (
+                          <option key={`filter-value-${filterIndex}-${activeFilterColumn}-${value}`} value={value}>
+                            {getFilterValueLabel(value)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                );
+              })}
 
               <button
                 type="button"
                 className="ghost-button"
                 onClick={() => {
-                  if (!scriptStorageKey) {
-                    return;
-                  }
-
-                  setPostResponseTableFilters((current) => ({
-                    ...current,
-                    [scriptStorageKey]: {
-                      columnKey: '',
-                      value: '',
-                    },
-                  }));
+                  setTableFiltersForScript((filters) => [...filters, { columnKey: '', value: '' }]);
                 }}
-                disabled={!activeFilterColumn && currentTableFilter.value === ''}
               >
-                Limpiar filtro
+                Añadir filtro
+              </button>
+
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => {
+                  setTableFiltersForScript((filters) => (filters.length > 1 ? filters.slice(0, -1) : filters));
+                }}
+                disabled={activeTableFilters.length <= 1}
+              >
+                Eliminar filtro
+              </button>
+
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => {
+                  setTableFiltersForScript(() => [{ columnKey: '', value: '' }]);
+                }}
+                disabled={activeTableFilters.every((filter) => filter.columnKey === '' && filter.value === '')}
+              >
+                Limpiar filtros
               </button>
 
               <button
                 type="button"
                 className="ghost-button"
                 onClick={handleCopyTableToClipboard}
-                title="Copiar tabla en formato TSV para pegar en Excel"
+                title={appLanguage === 'en' ? 'Copy table as TSV to paste into Excel' : 'Copiar tabla en formato TSV para pegar en Excel'}
               >
-                Copiar tabla
+                {appLanguage === 'en' ? 'Copy table' : 'Copiar tabla'}
               </button>
             </div>
           </div>
@@ -5585,6 +6406,16 @@ function App() {
               <thead>
                 <tr>
                   {orderedColumns.map((column) => (
+                    (() => {
+                      const sortDirection = activeTableSort?.columnKey === column ? activeTableSort.direction : null;
+                      const sortLabel = sortDirection === 'asc' ? '↑' : sortDirection === 'desc' ? '↓' : '↕';
+                      const sortTitle = sortDirection === 'asc'
+                        ? 'Ordenado ascendente. Click para ordenar descendente.'
+                        : sortDirection === 'desc'
+                          ? 'Ordenado descendente. Click para volver al orden original.'
+                          : 'Ordenar por esta columna';
+
+                      return (
                     <th
                       key={`script-column-${column}`}
                       className={`post-response-table-header-editable ${draggedColumnInfo?.columnKey === column ? 'dragging' : ''}`}
@@ -5595,20 +6426,37 @@ function App() {
                       onDragEnd={handleColumnDragEnd}
                       title={getColumnTooltip(column)}
                     >
-                      <input
-                        type="text"
-                        value={resolvedColumnNames[column] ?? column}
-                        onChange={(event) => updateColumnName(column, event.target.value)}
-                        onBlur={saveColumnNames}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') {
-                            saveColumnNames();
-                          }
-                        }}
-                        title={getColumnTooltip(column)}
-                        draggable={false}
-                      />
+                      <div className="post-response-table-header-content">
+                        <input
+                          type="text"
+                          value={resolvedColumnNames[column] ?? column}
+                          onChange={(event) => updateColumnName(column, event.target.value)}
+                          onBlur={saveColumnNames}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              saveColumnNames();
+                            }
+                          }}
+                          title={getColumnTooltip(column)}
+                          draggable={false}
+                        />
+                        <button
+                          type="button"
+                          className={`post-response-table-sort-button${sortDirection ? ' active' : ''}`}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            toggleColumnSort(column);
+                          }}
+                          title={sortTitle}
+                          aria-label={sortTitle}
+                        >
+                          {sortLabel}
+                        </button>
+                      </div>
                     </th>
+                      );
+                    })()
                   ))}
                 </tr>
               </thead>
@@ -5617,11 +6465,11 @@ function App() {
                   <tr>
                     <td colSpan={Math.max(orderedColumns.length, 1)}>Sin filas generadas por el script.</td>
                   </tr>
-                ) : filteredRows.length === 0 ? (
+                ) : sortedRows.length === 0 ? (
                   <tr>
-                    <td colSpan={Math.max(orderedColumns.length, 1)}>No hay filas que coincidan con el filtro seleccionado.</td>
+                    <td colSpan={Math.max(orderedColumns.length, 1)}>No hay filas que coincidan con los filtros seleccionados.</td>
                   </tr>
-                ) : filteredRows.map((row, rowIndex) => (
+                ) : sortedRows.map((row, rowIndex) => (
                   <tr key={`script-row-${rowIndex}`}>
                     {orderedColumns.map((column) => {
                       const value = row[column];
@@ -6186,8 +7034,89 @@ function App() {
   }
 
   function updateGetEndpointTuple(index: number, value: string) {
-    setGetEndpointTuples((current) => current.map((item, itemIndex) => (itemIndex === index ? value : item)));
+    const previousValue = getEndpointTuples[index] ?? '';
+    const tupleId = getEndpointTupleIds[index] ?? '';
+    const preparedValue = value;
+
+    const nextRuntimeParams = reconcileEditedEndpointParamValues(
+      previousValue,
+      preparedValue,
+      tupleId ? (endpointRuntimeParamsByTupleId[tupleId] ?? pathParamValues[previousValue] ?? {}) : (pathParamValues[previousValue] ?? {}),
+      tupleId || null,
+      endpointRuntimeParamsByTupleId,
+      pathParamValues,
+    );
+
+    const nextRuntime = tupleId
+      ? { ...endpointRuntimeParamsByTupleId, [tupleId]: nextRuntimeParams }
+      : endpointRuntimeParamsByTupleId;
+    const nextPath = tupleId
+      ? pathParamValues
+      : { ...pathParamValues, [preparedValue]: nextRuntimeParams };
+
+    const syncedState = syncMatchingParamValuesAcrossTuples(nextRuntime, nextPath);
+
+    setGetEndpointTuples((current) => current.map((item, itemIndex) => (itemIndex === index ? preparedValue : item)));
+    setEndpointRuntimeParamsByTupleId(syncedState.runtimeParamsByTupleId);
+    setPathParamValues(syncedState.pathParamValues);
     setHideGetEndpointMatchesByIndex((current) => ({ ...current, [index]: false }));
+  }
+
+  function syncEndpointTupleParamState(index: number, method: 'GET' | 'POST') {
+    const tupleId = method === 'GET' ? (getEndpointTupleIds[index] ?? '') : (postEndpointTupleIds[index] ?? '');
+    const currentValue = method === 'GET' ? (getEndpointTuples[index] ?? '') : (postEndpointTuples[index] ?? '');
+    const snapshotKey = tupleId || `${method}-${index}`;
+    const previousEndpoint = endpointTupleEditSnapshotRef.current[snapshotKey] ?? currentValue;
+    const currentParams = tupleId ? (endpointRuntimeParamsByTupleId[tupleId] ?? {}) : (pathParamValues[currentValue] ?? {});
+    const reconciled = reconcileEditedEndpointParamValues(
+      previousEndpoint,
+      currentValue,
+      currentParams,
+      tupleId || null,
+      endpointRuntimeParamsByTupleId,
+      pathParamValues,
+    );
+
+    const nextRuntime = tupleId
+      ? {
+          ...endpointRuntimeParamsByTupleId,
+          [tupleId]: reconciled,
+        }
+      : endpointRuntimeParamsByTupleId;
+
+    const nextPath = tupleId
+      ? pathParamValues
+      : {
+          ...pathParamValues,
+          [currentValue]: reconciled,
+        };
+
+    const syncedState = syncMatchingParamValuesAcrossTuples(nextRuntime, nextPath, reconciled);
+    setEndpointRuntimeParamsByTupleId(syncedState.runtimeParamsByTupleId);
+    setPathParamValues(syncedState.pathParamValues);
+
+    endpointTupleEditSnapshotRef.current[snapshotKey] = currentValue;
+  }
+
+  function applyRuntimeParamValueChange(tupleId: string | null, endpointKey: string, paramName: string, nextValue: string) {
+    const nextRuntime = { ...endpointRuntimeParamsByTupleId };
+    const nextPath = { ...pathParamValues };
+
+    if (tupleId) {
+      nextRuntime[tupleId] = {
+        ...(nextRuntime[tupleId] ?? {}),
+        [paramName]: nextValue,
+      };
+    } else {
+      nextPath[endpointKey] = {
+        ...(nextPath[endpointKey] ?? {}),
+        [paramName]: nextValue,
+      };
+    }
+
+    const syncedState = syncMatchingParamValuesAcrossTuples(nextRuntime, nextPath, { [paramName]: nextValue });
+    setEndpointRuntimeParamsByTupleId(syncedState.runtimeParamsByTupleId);
+    setPathParamValues(syncedState.pathParamValues);
   }
 
   function addGetEndpointTuple() {
@@ -6418,17 +7347,17 @@ function App() {
       </div>
       <aside className="hero-panel">
         <p className="eyebrow">PostAIS</p>
-        <h1>Mensajeria RAW por filas de Excel/CSV.</h1>
-        <p className="lede">Importa tuplas, recorre filas en vista deslizable y envia cada linea como body RAW del POST.</p>
+        <h1>Aplicación para procesamiento de mensajería API REST</h1>
+        <p className="lede">Para mensajería GET y POST</p>
         <button
           type="button"
           className="theme-toggle-button"
           onClick={() => setIsNightMode((current) => !current)}
-          aria-label={isNightMode ? 'Cambiar a modo claro' : 'Cambiar a modo noche'}
-          title={isNightMode ? 'Cambiar a modo claro' : 'Cambiar a modo noche'}
+          aria-label={isNightMode ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+          title={isNightMode ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
         >
           <span className="theme-toggle-icon" aria-hidden="true">{isNightMode ? '☀️' : '🌙'}</span>
-          {isNightMode ? 'Modo claro' : 'Modo noche'}
+          {isNightMode ? 'Modo claro' : 'Modo oscuro'}
         </button>
 
         <div className="status-card">
@@ -6460,7 +7389,7 @@ function App() {
             onClick={() => setActiveSection('favorites')}
             aria-pressed={activeSection === 'favorites'}
           >
-            Favoritos ({favoriteEndpoints.length})
+            Favoritos (E:{favoriteBaseEndpoints.length} y C:{favoriteCommands.length})
           </button>
         </div>
 
@@ -6534,6 +7463,19 @@ function App() {
               </div>
             </div>
           ) : null}
+        </div>
+
+        <div className="app-settings-launch">
+          <button
+            type="button"
+            className="secrets-menu-toggle"
+            onClick={() => setShowSettingsDialog(true)}
+            aria-haspopup="dialog"
+            aria-expanded={showSettingsDialog}
+          >
+            <span className="theme-toggle-icon" aria-hidden="true">⚙</span>
+            Configuracion
+          </button>
         </div>
       </aside>
 
@@ -6690,11 +7632,14 @@ function App() {
                         type="url"
                         value={endpointTuple}
                         onFocus={() => {
+                          const tupleId = getEndpointTupleIds[index] ?? `get-${index}`;
+                          endpointTupleEditSnapshotRef.current[tupleId] = endpointTuple; 
                           setFocusedGetEndpointIndex(index);
                           setSelectedGetEndpointIndex(index);
                         }}
                         onBlur={() => {
                           setFocusedGetEndpointIndex((current) => (current === index ? null : current));
+                          syncEndpointTupleParamState(index, 'GET');
                         }}
                         onChange={(event) => updateGetEndpointTuple(index, event.target.value)}
                         placeholder="https://api.tu-servicio.com/recurso"
@@ -6720,18 +7665,13 @@ function App() {
                               placeholder={param.kind === 'path' ? `Valor para :${param.name}` : `Valor para {{${param.name}}}`}
                               value={tupleRuntimeParams[param.name] ?? ''}
                               onChange={(e) => {
+                                const nextValue = e.target.value;
                                 if (tupleId) {
-                                  setEndpointRuntimeParamsByTupleId((prev) => ({
-                                    ...prev,
-                                    [tupleId]: { ...(prev[tupleId] ?? {}), [param.name]: e.target.value },
-                                  }));
+                                  applyRuntimeParamValueChange(tupleId, endpointTuple, param.name, nextValue);
                                   return;
                                 }
 
-                                setPathParamValues((prev) => ({
-                                  ...prev,
-                                  [endpointTuple]: { ...(prev[endpointTuple] ?? {}), [param.name]: e.target.value },
-                                }));
+                                applyRuntimeParamValueChange(null, endpointTuple, param.name, nextValue);
                               }}
                             />
                           </label>
@@ -6774,11 +7714,14 @@ function App() {
                         type="url"
                         value={endpointTuple}
                         onFocus={() => {
+                          const tupleId = postEndpointTupleIds[index] ?? `post-${index}`;
+                          endpointTupleEditSnapshotRef.current[tupleId] = endpointTuple;
                           setFocusedPostEndpointIndex(index);
                           setSelectedPostEndpointIndex(index);
                         }}
                         onBlur={() => {
                           setFocusedPostEndpointIndex((current) => (current === index ? null : current));
+                          syncEndpointTupleParamState(index, 'POST');
                         }}
                         onChange={(event) => {
                           setSelectedPostEndpointIndex(index);
@@ -6807,18 +7750,13 @@ function App() {
                               placeholder={param.kind === 'path' ? `Valor para :${param.name}` : `Valor para {{${param.name}}}`}
                               value={tupleRuntimeParams[param.name] ?? ''}
                               onChange={(e) => {
+                                const nextValue = e.target.value;
                                 if (tupleId) {
-                                  setEndpointRuntimeParamsByTupleId((prev) => ({
-                                    ...prev,
-                                    [tupleId]: { ...(prev[tupleId] ?? {}), [param.name]: e.target.value },
-                                  }));
+                                  applyRuntimeParamValueChange(tupleId, endpointTuple, param.name, nextValue);
                                   return;
                                 }
 
-                                setPathParamValues((prev) => ({
-                                  ...prev,
-                                  [endpointTuple]: { ...(prev[endpointTuple] ?? {}), [param.name]: e.target.value },
-                                }));
+                                applyRuntimeParamValueChange(null, endpointTuple, param.name, nextValue);
                               }}
                             />
                           </label>
@@ -6845,83 +7783,115 @@ function App() {
             </div>
           )}
 
-          <div className="field stretch-full endpoint-composer-panel">
+          <div className="field stretch-full endpoint-composer-panel endpoint-composer-panel-compact">
             <span>Constructor de Endpoint</span>
-            <div className="endpoint-composer-grid">
-              <label className="field endpoint-composer-item">
-                <span>Endpoint base</span>
-                <div className="endpoint-input-row">
-                  <input
-                    type="text"
-                    value={baseEndpoint}
-                    onFocus={() => setIsBaseEndpointFocused(true)}
-                    onBlur={() => setIsBaseEndpointFocused(false)}
-                    onChange={(event) => updateBaseEndpoint(event.target.value)}
-                    placeholder="https://host/servicio-base"
-                  />
-                  <button
-                    type="button"
-                    className={`favorite-toggle-button ${isFavoriteBaseEndpoint(baseEndpoint) ? 'favorite-toggle-button-active' : ''}`}
-                    onClick={() => toggleFavoriteBaseEndpoint(baseEndpoint)}
-                    title={isFavoriteBaseEndpoint(baseEndpoint) ? 'Quitar endpoint base de favoritos' : 'Anadir endpoint base a favoritos'}
-                    aria-label={isFavoriteBaseEndpoint(baseEndpoint) ? 'Quitar endpoint base de favoritos' : 'Anadir endpoint base a favoritos'}
-                  >
-                    {isFavoriteBaseEndpoint(baseEndpoint) ? '★' : '☆'}
-                  </button>
-                </div>
-              </label>
+            <div className="endpoint-composer-inputs">
+              <div className="endpoint-composer-grid">
+                <label className="field endpoint-composer-item">
+                  <span>Endpoint base</span>
+                  <div className="endpoint-input-row">
+                    <input
+                      type="text"
+                      value={baseEndpoint}
+                      onFocus={() => setIsBaseEndpointFocused(true)}
+                      onBlur={() => setIsBaseEndpointFocused(false)}
+                      onChange={(event) => updateBaseEndpoint(event.target.value)}
+                      placeholder="https://host/servicio-base"
+                    />
+                    <button
+                      type="button"
+                      className={`favorite-toggle-button ${isFavoriteBaseEndpoint(baseEndpoint) ? 'favorite-toggle-button-active' : ''}`}
+                      onClick={() => toggleFavoriteBaseEndpoint(baseEndpoint)}
+                      title={isFavoriteBaseEndpoint(baseEndpoint) ? 'Quitar endpoint base de favoritos' : 'Anadir endpoint base a favoritos'}
+                      aria-label={isFavoriteBaseEndpoint(baseEndpoint) ? 'Quitar endpoint base de favoritos' : 'Anadir endpoint base a favoritos'}
+                    >
+                      {isFavoriteBaseEndpoint(baseEndpoint) ? '★' : '☆'}
+                    </button>
+                  </div>
+                </label>
 
-              <label className="field endpoint-composer-item">
-                <span>Comando</span>
-                <div className="endpoint-input-row">
-                  <input
-                    type="text"
-                    value={commandEndpoint}
-                    onFocus={() => setIsCommandEndpointFocused(true)}
-                    onBlur={() => setIsCommandEndpointFocused(false)}
-                    onChange={(event) => updateCommandEndpoint(event.target.value)}
-                    placeholder="/v2/example"
-                  />
-                  <button
-                    type="button"
-                    className={`favorite-toggle-button ${isFavoriteCommand(commandEndpoint, method) ? 'favorite-toggle-button-active' : ''}`}
-                    onClick={() => toggleFavoriteCommand(commandEndpoint, method)}
-                    title={isFavoriteCommand(commandEndpoint, method) ? 'Quitar comando de favoritos' : 'Anadir comando a favoritos'}
-                    aria-label={isFavoriteCommand(commandEndpoint, method) ? 'Quitar comando de favoritos' : 'Anadir comando a favoritos'}
-                  >
-                    {isFavoriteCommand(commandEndpoint, method) ? '★' : '☆'}
-                  </button>
-                </div>
-              </label>
+                <label className="field endpoint-composer-item">
+                  <span>Comando</span>
+                  <div className="endpoint-input-row">
+                    <input
+                      type="text"
+                      value={commandEndpoint}
+                      onFocus={() => setIsCommandEndpointFocused(true)}
+                      onBlur={() => setIsCommandEndpointFocused(false)}
+                      onChange={(event) => updateCommandEndpoint(event.target.value)}
+                      placeholder="/v2/example"
+                    />
+                    <button
+                      type="button"
+                      className={`favorite-toggle-button ${isFavoriteCommand(commandEndpoint, method) ? 'favorite-toggle-button-active' : ''}`}
+                      onClick={() => toggleFavoriteCommand(commandEndpoint, method)}
+                      title={isFavoriteCommand(commandEndpoint, method) ? 'Quitar comando de favoritos' : 'Anadir comando a favoritos'}
+                      aria-label={isFavoriteCommand(commandEndpoint, method) ? 'Quitar comando de favoritos' : 'Anadir comando a favoritos'}
+                    >
+                      {isFavoriteCommand(commandEndpoint, method) ? '★' : '☆'}
+                    </button>
+                  </div>
+                </label>
+              </div>
             </div>
 
-            {renderBaseEndpointMatches()}
-            {renderCommandMatches()}
+            {!isComposerSuggestionsVisible ? (
+              <>
+                {showFavoriteCommandsListInComposer ? (
+                  <div className="field stretch-full favorite-commands-selector-panel">
+                    <button
+                      type="button"
+                      className="ghost-button favorite-commands-disclosure-button"
+                      onClick={() => setShowFavoriteCommandsSelector((current) => !current)}
+                      aria-expanded={showFavoriteCommandsSelector}
+                    >
+                      {showFavoriteCommandsSelector
+                        ? `Ocultar comandos favoritos (${contextualFavoriteCommands.length})`
+                        : `Comandos favoritos para anadir (${contextualFavoriteCommands.length})`}
+                      {selectedFavoriteCommandIdsOrdered.length > 0 ? ` - seleccionados: ${selectedFavoriteCommandIdsOrdered.length}` : ''}
+                    </button>
+                    {showFavoriteCommandsSelector ? renderFavoriteCommandsSelection() : null}
+                  </div>
+                ) : null}
 
-            <div className="field stretch-full favorite-commands-selector-panel">
-              <button
-                type="button"
-                className="ghost-button favorite-commands-disclosure-button"
-                onClick={() => setShowFavoriteCommandsSelector((current) => !current)}
-                aria-expanded={showFavoriteCommandsSelector}
-              >
-                {showFavoriteCommandsSelector
-                  ? `Ocultar comandos favoritos (${contextualFavoriteCommands.length})`
-                  : `Comandos favoritos para anadir (${contextualFavoriteCommands.length})`}
-                {selectedFavoriteCommandIdsOrdered.length > 0 ? ` - seleccionados: ${selectedFavoriteCommandIdsOrdered.length}` : ''}
-              </button>
-              {showFavoriteCommandsSelector ? renderFavoriteCommandsSelection() : null}
-            </div>
-
-            <div className="action-row">
-              <button type="button" className="secondary-button" onClick={() => applyComposedEndpointsToCurrentMethod('add')} disabled={!canApplyComposedEndpoints}>
-                Anadir a endpoint
-              </button>
-              <button type="button" className="ghost-button" onClick={() => applyComposedEndpointsToCurrentMethod('replace')} disabled={!canApplyComposedEndpoints}>
-                Sustituir endpoint(s)
-              </button>
-            </div>
+                {hasComposerTemplateParams ? (
+                  <div className="action-row">
+                    <label className="field checkbox-field compact-checkbox-field">
+                      <input
+                        type="checkbox"
+                        checked={autoRenameDuplicateParams}
+                        onChange={(event) => setAutoRenameDuplicateParams(event.target.checked)}
+                      />
+                      <span>{t('add new params')}</span>
+                      <span
+                        className="help-tooltip"
+                        title={t('Cuando está activo, si un endpoint nuevo reutiliza nombres de parámetro ya usados en otros endpoints, se generan variantes del tipo {{param}} > {{param1}} > {{param2}} para que cada tupla conserve sus valores propios sin sustituirse entre sí.')}
+                      >
+                        ?
+                      </span>
+                    </label>
+                    <button type="button" className="secondary-button" onClick={() => applyComposedEndpointsToCurrentMethod('add')} disabled={!canApplyComposedEndpoints}>
+                      Anadir a endpoint
+                    </button>
+                    <button type="button" className="ghost-button" onClick={() => applyComposedEndpointsToCurrentMethod('replace')} disabled={!canApplyComposedEndpoints}>
+                      Sustituir endpoint(s)
+                    </button>
+                  </div>
+                ) : (
+                  <div className="action-row">
+                    <button type="button" className="secondary-button" onClick={() => applyComposedEndpointsToCurrentMethod('add')} disabled={!canApplyComposedEndpoints}>
+                      Anadir a endpoint
+                    </button>
+                    <button type="button" className="ghost-button" onClick={() => applyComposedEndpointsToCurrentMethod('replace')} disabled={!canApplyComposedEndpoints}>
+                      Sustituir endpoint(s)
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : null}
           </div>
+
+          {renderComposerMatchesPanel()}
 
           {method === 'GET'
             ? renderEndpointMatches(
@@ -7175,23 +8145,35 @@ function App() {
           </section>
         ) : null}
 
-        <section className="panel preview-panel" aria-live="polite">
+        <section className={`panel preview-panel preflight-panel preflight-panel-${preflightStatus.tone}`} aria-live="polite">
           <div className="panel-header">
             <h2>Validacion previa</h2>
-            <span>{preflightIssues.length === 0 ? 'Lista para enviar' : `${preflightIssues.length} aviso(s)`}</span>
+            <span className={`preflight-pill preflight-pill-${preflightStatus.tone}`}>
+              <strong aria-hidden="true">{preflightStatus.tone === 'success' ? '●' : preflightStatus.tone === 'warning' ? '▲' : '✖'}</strong>
+              {preflightStatus.label}
+            </span>
           </div>
-          {preflightIssues.length === 0 ? (
-            <p className="muted">La configuracion actual no muestra errores obvios antes del envio.</p>
-          ) : (
+          <p className="muted">{preflightStatus.helperText}</p>
+          {preflightStatus.blockingIssues.length > 0 ? (
             <div className="import-error-box">
               <strong>Corrige estos puntos antes de enviar</strong>
               <ul className="flat-list">
-                {preflightIssues.map((issue) => (
+                {preflightStatus.blockingIssues.map((issue) => (
                   <li key={issue}>{issue}</li>
                 ))}
               </ul>
             </div>
-          )}
+          ) : null}
+          {preflightStatus.warningIssues.length > 0 ? (
+            <div className="import-warning-box">
+              <strong>Avisos detectados</strong>
+              <ul className="flat-list">
+                {preflightStatus.warningIssues.map((issue) => (
+                  <li key={issue}>{issue}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </section>
 
         <section className="panel action-panel">
@@ -7305,7 +8287,7 @@ function App() {
         <section className="panel results-panel" ref={resultsPanelRef}>
           <div className="panel-header">
             <h2>Resultados detallados</h2>
-            <span>{results.length} respuestas registradas</span>
+            <span>{appLanguage === 'en' ? `${results.length} recorded response(s)` : `${results.length} respuestas registradas`}</span>
             <button type="button" className="ghost-button" onClick={() => void copyAllResultsToClipboard()} disabled={results.length === 0}>
               Copiar todo
             </button>
@@ -7347,16 +8329,28 @@ function App() {
                           : null;
 
                         return (
-                          <details key={`result-${group.endpoint}-${result.rowNumber}`} className={`result-card ${result.ok ? 'result-ok' : 'result-error'}`}>
+                          <details key={`result-${group.endpoint}-${result.rowNumber}`} className={`result-card result-${getResultTone(result)}`} onContextMenu={openResultDetailsContextMenu}>
                             <summary className="result-summary">
                               <div className="result-meta">
                                 <strong>GET {result.row.rowNumber}</strong>
                                 <span>{result.method}</span>
-                                <span>
+                                <span className="result-http-status">
                                   {result.status} {result.statusText}
+                                  <span
+                                    className="result-status-help"
+                                    title={getHttpStatusUserHint(result.status, result.statusText)}
+                                    aria-label={getHttpStatusUserHint(result.status, result.statusText)}
+                                  >
+                                    ?
+                                  </span>
                                 </span>
                                 <span>{result.durationMs} ms</span>
                               </div>
+                              <span
+                                className={`result-state-dot result-state-dot-${getResultTone(result)}`}
+                                aria-label={getResultTone(result) === 'ok' ? 'Resultado correcto' : getResultTone(result) === 'warn' ? 'Resultado con redireccion o advertencia' : 'Resultado con error'}
+                                title={getResultTone(result) === 'ok' ? 'Resultado correcto' : getResultTone(result) === 'warn' ? 'Resultado con redireccion o advertencia' : 'Resultado con error'}
+                              />
                             </summary>
 
                             {renderResultVisualSummary(result)}
@@ -7371,7 +8365,7 @@ function App() {
                                       className="ghost-button"
                                       onClick={() => generateSampleScriptForCommand(associatedCommand, responseContext)}
                                     >
-                                      Generar sample script
+                                      {appLanguage === 'en' ? 'Generate sample script' : 'Generar sample script'}
                                     </button>
                                     {associatedCommand.postResponseScript?.trim() ? (
                                       <button
@@ -7379,7 +8373,7 @@ function App() {
                                         className="ghost-button"
                                         onClick={() => editActiveScriptForCommand(associatedCommand, responseContext)}
                                       >
-                                        Editar script activo
+                                        {appLanguage === 'en' ? 'Edit active script' : 'Editar script activo'}
                                       </button>
                                     ) : null}
                                   </div>
@@ -7394,7 +8388,35 @@ function App() {
                                   <p className="muted-small">Este comando no tiene script post-respuesta. Puedes generar un sample o editarlo en Favoritos.</p>
                                 )}
                               </div>
-                            ) : null}
+                            ) : (() => {
+                              const hasBody = result.responseBody !== null && result.responseBody !== undefined && result.responseBody !== '';
+                              if (!hasBody) return null;
+                              return (
+                                <div className="post-response-script-panel">
+                                  <div className="post-response-script-header">
+                                    <strong>Visualización de respuesta</strong>
+                                    <div className="action-row">
+                                      <button
+                                        type="button"
+                                        className="ghost-button"
+                                        onClick={() => {
+                                          // Try to find a matching favorite command for this result
+                                          const matchedCommand = resolveFavoriteCommandForResult(result);
+                                          if (matchedCommand) {
+                                            generateSampleScriptForCommand(matchedCommand, responseContext);
+                                            return;
+                                          }
+                                          // No favorite found: open dialog but warn the user the script won't be saved
+                                          setStatusMessage('Este endpoint no está guardado como favorito. Guárdalo primero para poder asociar el script.');
+                                        }}
+                                      >
+                                        Generar script de visualización
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })()}
 
                             <div className="result-detail-grid">
                               <div>
@@ -7406,7 +8428,9 @@ function App() {
                                 <div className="result-response-actions">
                                   {shouldTruncate ? (
                                     <button type="button" className="ghost-button" onClick={() => toggleGetResponseExpanded(responseKey)}>
-                                      {isExpanded ? 'Mostrar menos' : `Mostrar mas (${responseLineCount} lineas)`}
+                                      {isExpanded
+                                        ? (appLanguage === 'en' ? 'Show less' : 'Mostrar menos')
+                                        : (appLanguage === 'en' ? `Show more (${responseLineCount} lines)` : `Mostrar mas (${responseLineCount} lineas)`)}
                                     </button>
                                   ) : null}
                                   <button
@@ -7422,11 +8446,17 @@ function App() {
                                       });
                                     }}
                                   >
-                                    Copiar respuesta
+                                    {appLanguage === 'en' ? 'Copy response' : 'Copiar respuesta'}
                                   </button>
                                 </div>
                                 <pre>{visibleResponseText}</pre>
                               </div>
+                            </div>
+
+                            <div className="result-collapse-actions">
+                              <button type="button" className="ghost-button" onClick={collapseResultDetails}>
+                                {appLanguage === 'en' ? 'Collapse dropdown' : 'Recoger desplegable'}
+                              </button>
                             </div>
                           </details>
                         );
@@ -7434,16 +8464,28 @@ function App() {
                     </div>
                   ))
                 : results.map((result) => (
-                    <details key={`result-${result.rowNumber}`} className={`result-card ${result.ok ? 'result-ok' : 'result-error'}`}>
+                    <details key={`result-${result.rowNumber}`} className={`result-card result-${getResultTone(result)}`} onContextMenu={openResultDetailsContextMenu}>
                       <summary className="result-summary">
                         <div className="result-meta">
                           <strong>Fila {result.row.rowNumber}</strong>
                           <span>{result.method}</span>
-                          <span>
+                          <span className="result-http-status">
                             {result.status} {result.statusText}
+                            <span
+                              className="result-status-help"
+                              title={getHttpStatusUserHint(result.status, result.statusText)}
+                              aria-label={getHttpStatusUserHint(result.status, result.statusText)}
+                            >
+                              ?
+                            </span>
                           </span>
                           <span>{result.durationMs} ms</span>
                         </div>
+                        <span
+                          className={`result-state-dot result-state-dot-${getResultTone(result)}`}
+                          aria-label={getResultTone(result) === 'ok' ? 'Resultado correcto' : getResultTone(result) === 'warn' ? 'Resultado con redireccion o advertencia' : 'Resultado con error'}
+                          title={getResultTone(result) === 'ok' ? 'Resultado correcto' : getResultTone(result) === 'warn' ? 'Resultado con redireccion o advertencia' : 'Resultado con error'}
+                        />
                       </summary>
 
                       {renderResultVisualSummary(result)}
@@ -7465,6 +8507,12 @@ function App() {
                             })}
                           </pre>
                         </div>
+                      </div>
+
+                      <div className="result-collapse-actions">
+                        <button type="button" className="ghost-button" onClick={collapseResultDetails}>
+                          {appLanguage === 'en' ? 'Collapse dropdown' : 'Recoger desplegable'}
+                        </button>
                       </div>
                     </details>
                   ))}
@@ -7607,9 +8655,9 @@ function App() {
             <section className="panel action-panel">
               <div>
                 <h2>Favoritos</h2>
-                <p>Gestiona endpoints conocidos reutilizables y crea nuevos manualmente desde aqui.</p>
+                <p>{appLanguage === 'en' ? 'Manage known reusable endpoints and create new ones manually here.' : 'Gestiona endpoints conocidos reutilizables y crea nuevos manualmente desde aqui.'}</p>
               </div>
-              <div className="action-row">
+              <div className="favorites-actions-grid">
                 <button type="button" className="secondary-button" onClick={() => favoriteBaseEndpointsImportInputRef.current?.click()}>
                   Importar endpoints base favoritos JSON
                 </button>
@@ -7864,7 +8912,9 @@ function App() {
                   <h2>Endpoints base favoritos</h2>
                   <span>{filteredFavoriteBaseEndpointsForManagement.length}</span>
                 </div>
-                <p className="muted-small">Los endpoints base se comparten entre GET y POST en el constructor.</p>
+                <div className="favorites-panel-intro">
+                  <p className="muted-small">Los endpoints base se comparten entre GET y POST en el constructor.</p>
+                </div>
                 {filteredFavoriteBaseEndpointsForManagement.length === 0 ? (
                   <p className="muted">No hay endpoints base favoritos que coincidan para este entorno.</p>
                 ) : (
@@ -7950,6 +9000,7 @@ function App() {
                   <h2>Comandos favoritos</h2>
                   <span>{filteredFavoriteCommandsForManagement.length}</span>
                 </div>
+                <div className="favorites-panel-intro" aria-hidden="true" />
                 {filteredFavoriteCommandsForManagement.length === 0 ? (
                   <p className="muted">No hay comandos favoritos que coincidan para este entorno.</p>
                 ) : (
@@ -8642,6 +9693,125 @@ function App() {
                 </button>
               </div>
             </section>
+          </div>
+        ) : null}
+
+        {showSettingsDialog ? (
+          <div className="modal-backdrop" role="presentation" onClick={() => setShowSettingsDialog(false)}>
+            <section
+              className="confirm-dialog settings-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="settings-dialog-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="panel-header">
+                <h2 id="settings-dialog-title">Configuracion</h2>
+              </div>
+              <p>Ajusta las preferencias globales de la aplicación.</p>
+
+              <label className="field">
+                <span>Tema de colores</span>
+                <select
+                  value={selectedThemePalette}
+                  onChange={(event) => setSelectedThemePalette(event.target.value as ThemePaletteId)}
+                >
+                  {THEME_PALETTE_OPTIONS.map((palette) => (
+                    <option key={`theme-palette-${palette.id}`} value={palette.id}>
+                      {getTranslatedThemePaletteLabel(appLanguage, palette.id, palette.label)}
+                    </option>
+                  ))}
+                </select>
+                <small className="muted-small">{t(selectedThemePaletteOption.description)}</small>
+              </label>
+
+              <label className="field">
+                <span>Idioma de la aplicacion</span>
+                <select
+                  value={appLanguage}
+                  onChange={(event) => setAppLanguage(event.target.value as AppLanguage)}
+                >
+                  {appLanguageOptions.map((languageOption) => (
+                    <option key={`language-${languageOption.id}`} value={languageOption.id}>
+                      {appLanguage === 'en'
+                        ? (languageOption.id === 'es' ? 'Spanish' : 'English')
+                        : (languageOption.id === 'es' ? 'Espanol' : 'Ingles')}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="field settings-theme-mode-field">
+                <span>Modo del tema</span>
+                <button
+                  type="button"
+                  className="ghost-button settings-theme-toggle-button"
+                  onClick={() => setIsNightMode((current) => !current)}
+                  aria-label={isNightMode ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+                  title={isNightMode ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+                >
+                  <span className="theme-toggle-icon" aria-hidden="true">{isNightMode ? '☀️' : '🌙'}</span>
+                  {isNightMode ? 'Modo claro' : 'Modo oscuro'}
+                </button>
+              </div>
+
+              <label className="field">
+                <span>Modo de interfaz</span>
+                <select value={interfaceMode} onChange={(event) => setInterfaceMode(event.target.value as InterfaceMode)}>
+                  <option value="basic">{appLanguage === 'en' ? 'Basic' : 'Basico'}</option>
+                  <option value="advanced">{appLanguage === 'en' ? 'Advanced' : 'Avanzado'}</option>
+                </select>
+              </label>
+
+              <label className="field checkbox-field compact-checkbox-field settings-dialog-checkbox">
+                <input type="checkbox" checked={allowInsecureTls} onChange={(event) => setAllowInsecureTls(event.target.checked)} />
+                <span>{appLanguage === 'en' ? 'Allow self-signed TLS (testing only)' : 'Permitir TLS autofirmado (solo pruebas)'}</span>
+              </label>
+
+              <label className="field checkbox-field compact-checkbox-field settings-dialog-checkbox">
+                <input type="checkbox" checked={stopOnError} onChange={(event) => setStopOnError(event.target.checked)} />
+                <span>{appLanguage === 'en' ? 'Stop batch on first error' : 'Detener el lote al primer error'}</span>
+              </label>
+
+              <label className="field">
+                <span>Mostrar listado de comandos favoritos en constructor</span>
+                <select
+                  value={showFavoriteCommandsListInComposer ? 'true' : 'false'}
+                  onChange={(event) => setShowFavoriteCommandsListInComposer(event.target.value === 'true')}
+                >
+                  <option value="false">{appLanguage === 'en' ? 'No' : 'No'}</option>
+                  <option value="true">{appLanguage === 'en' ? 'Yes' : 'Si'}</option>
+                </select>
+              </label>
+
+              <div className="action-row confirm-actions">
+                <button type="button" className="primary-button" onClick={() => setShowSettingsDialog(false)}>
+                  Cerrar
+                </button>
+              </div>
+            </section>
+          </div>
+        ) : null}
+
+        {resultDetailsContextMenu ? (
+          <div className="result-context-menu-backdrop" role="presentation" onClick={closeResultDetailsContextMenu}>
+            <div
+              className="result-context-menu"
+              role="menu"
+              style={{ left: `${resultDetailsContextMenu.x}px`, top: `${resultDetailsContextMenu.y}px` }}
+              onClick={(event) => event.stopPropagation()}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              {resultDetailsContextMenu.isExpanded ? (
+                <button type="button" className="result-context-menu-item" onClick={collapseResultDetailsFromContextMenu}>
+                  Recoger desplegable
+                </button>
+              ) : (
+                <button type="button" className="result-context-menu-item" onClick={toggleResultDetailsFromContextMenu}>
+                  Expandir desplegable
+                </button>
+              )}
+            </div>
           </div>
         ) : null}
       </main>

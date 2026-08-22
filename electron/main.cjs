@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, safeStorage, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, safeStorage, dialog, Menu } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
@@ -225,13 +225,21 @@ function extractNetworkErrorInfo(error, tlsBypassEnabled) {
 function createWindow() {
   const windowIconPath = path.join(__dirname, '..', 'assets', 'icons', 'postais-box-wings.png');
 
+  Menu.setApplicationMenu(null);
+
   const window = new BrowserWindow({
     width: 1440,
     height: 960,
     minWidth: 1100,
     minHeight: 760,
-    backgroundColor: '#f4efe5',
+    backgroundColor: '#060915',
     icon: fs.existsSync(windowIconPath) ? windowIconPath : undefined,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#07091c',
+      symbolColor: '#c8d0ff',
+      height: 38,
+    },
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -512,6 +520,28 @@ ipcMain.handle('http:request', async (_event, request) => {
       await insecureDispatcher.close();
     }
     clearTimeout(timeoutId);
+  }
+});
+
+ipcMain.handle('window:setZoom', (_event, factor) => {
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  if (win) {
+    const clamped = Math.min(3.0, Math.max(0.25, Number(factor) || 1));
+    win.webContents.setZoomFactor(clamped);
+    return clamped;
+  }
+  return null;
+});
+
+ipcMain.handle('window:getZoom', () => {
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  return win ? win.webContents.getZoomFactor() : 1;
+});
+
+ipcMain.handle('window:setTitleBarOverlay', (_event, options) => {
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  if (win && typeof win.setTitleBarOverlay === 'function') {
+    win.setTitleBarOverlay(options);
   }
 });
 
