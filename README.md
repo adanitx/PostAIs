@@ -1,5 +1,15 @@
 # PostAIs
 
+## Novedades v1.3.4
+
+- Los scripts de visualización se intentan ejecutar también con respuestas grandes; el tamaño del body ya no bloquea previamente la ejecución.
+- Si un script devuelve una salida vacía aunque la respuesta contenga datos, la interfaz lo indica y ofrece regenerar el sample script para esa respuesta.
+- Se mantienen las validaciones de seguridad de scripts: `return` obligatorio y bloqueo de acceso al DOM, contexto global, red, almacenamiento y temporizadores.
+- Añadido flujo portable firmado con `scripts/sign-portable.ps1`, compatible con certificados PFX o certificados de firma instalados en Windows.
+- Añadido `npm run portable:signed` para generar, firmar y comprimir el portable en un único flujo.
+
+Consulta el detalle completo en [release-notes-v1.3.4.md](release-notes-v1.3.4.md).
+
 Aplicacion de escritorio basada en Electron + React para enviar lotes HTTP desde un CSV. Ahora soporta GET y POST, query params por plantilla, variables privadas de autenticacion y detalle completo de errores por fila.
 
 ## Novedades recientes (v1.3.1)

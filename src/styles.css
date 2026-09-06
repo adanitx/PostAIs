@@ -2088,6 +2088,28 @@ pre {
   flex-wrap: wrap;
 }
 
+.script-mismatch-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  border: 1px solid color-mix(in srgb, var(--magenta) 38%, var(--line) 62%);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--magenta) 10%, transparent 90%);
+  padding: 0.6rem 0.75rem;
+}
+
+.script-mismatch-hint p {
+  margin: 0;
+  flex: 1 1 320px;
+}
+
+.script-mismatch-hint button {
+  padding: 0.5rem 0.9rem;
+  font-size: 0.86rem;
+}
+
 .result-response-actions {
   display: flex;
   align-items: center;

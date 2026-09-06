@@ -35,14 +35,13 @@ const defaultHeaders = JSON.stringify(
   null,
   2,
 );
-
-const defaultQuery = JSON.stringify({}, null, 2);
-
+const defaultQuery = JSON.stringify(
+  {},
+  null,
+  2,
+);
 const defaultBodyTemplate = JSON.stringify(
-  {
-    phone: '{{col1}}',
-    message: '{{col2}}',
-  },
+  {},
   null,
   2,
 );
@@ -67,7 +66,6 @@ const MAX_REQUEST_HISTORY_ENTRIES = 150;
 const MAX_FAVORITE_NAME_LENGTH = 50;
 const MAX_REST_DESCRIPTION_LENGTH = 50;
 const MAX_RESPONSE_PREVIEW_LINES = 50;
-const MAX_POST_RESPONSE_INPUT_SIZE = 750000;
 const POST_RESPONSE_BLOCKED_PATTERNS: ReadonlyArray<{ pattern: RegExp; reason: string }> = [
   { pattern: /\b(?:window|document|globalThis|global|self)\b/i, reason: 'No se permite acceder al DOM ni al contexto global.' },
   { pattern: /\b(?:Function|eval)\b/i, reason: 'No se permite ejecutar codigo dinamico dentro del script.' },
@@ -490,7 +488,9 @@ function extractScriptColumnNames(script: string): Record<string, string> {
       return {};
     }
 
-    return Object.fromEntries(Object.entries(parsed).map(([key, value]) => [key, String(value ?? '')]));
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+    );
   } catch {
     return {};
   }
@@ -830,14 +830,6 @@ function createPostResponseSampleScript(
   ].join('\n');
 }
 
-function getApproximateSerializedSize(value: unknown): number {
-  try {
-    return JSON.stringify(value)?.length ?? 0;
-  } catch {
-    return MAX_POST_RESPONSE_INPUT_SIZE + 1;
-  }
-}
-
 function cloneForScriptRuntime<T>(value: T): T {
   if (typeof structuredClone === 'function') {
     try {
@@ -931,7 +923,47 @@ function isScriptTableOutput(value: unknown): value is { columns: string[]; rows
     && value.rows.every((row) => isRecord(row));
 }
 
-function validatePostResponseScript(script: string, response: unknown): string | null {
+function isEmptyScriptOutput(output: unknown): boolean {
+  if (output === null || output === undefined || output === '') {
+    return true;
+  }
+
+  if (Array.isArray(output)) {
+    return output.length === 0;
+  }
+
+  if (isRecord(output)) {
+    if (Array.isArray(output.rows)) {
+      return output.rows.length === 0;
+    }
+
+    return Object.keys(output).length === 0;
+  }
+
+  return false;
+}
+
+function hasMeaningfulResponseBody(body: unknown): boolean {
+  if (body === null || body === undefined) {
+    return false;
+  }
+
+  if (typeof body === 'string') {
+    return body.trim() !== '';
+  }
+
+  if (Array.isArray(body)) {
+    return body.length > 0;
+  }
+
+  if (isRecord(body)) {
+    return Object.keys(body).length > 0;
+  }
+
+  return true;
+}
+
+function validatePostResponseScript(script: string, _response: unknown): string | null {
   const normalizedScript = script.trim();
   if (!normalizedScript) {
     return 'El script post-respuesta esta vacio.';
@@ -945,11 +977,6 @@ function validatePostResponseScript(script: string, response: unknown): string |
   const blocked = POST_RESPONSE_BLOCKED_PATTERNS.find(({ pattern }) => pattern.test(scriptForValidation));
   if (blocked) {
     return blocked.reason;
-  }
-
-  const responseSize = getApproximateSerializedSize(response);
-  if (responseSize > MAX_POST_RESPONSE_INPUT_SIZE) {
-    return `La respuesta es demasiado grande para ejecutar scripts de forma segura (${responseSize} caracteres serializados).`;
   }
 
   return null;
@@ -8382,7 +8409,25 @@ function App() {
                                   postResponseExecution.error ? (
                                     <p className="result-error-hint">Script error: {postResponseExecution.error}</p>
                                   ) : (
-                                    renderPostResponseOutput(postResponseExecution.output, associatedCommand.id)
+                                    <>
+                                      {isEmptyScriptOutput(postResponseExecution.output) && hasMeaningfulResponseBody(result.responseBody) ? (
+                                        <div className="script-mismatch-hint">
+                                          <p className="muted-small">
+                                            {appLanguage === 'en'
+                                              ? 'The active script returned no rows, but this response does contain data. The script may not match this endpoint response.'
+                                              : 'El script activo no ha devuelto filas, pero esta respuesta sí contiene datos. Es posible que el script no esté adaptado a la respuesta de este endpoint.'}
+                                          </p>
+                                          <button
+                                            type="button"
+                                            className="secondary-button"
+                                            onClick={() => generateSampleScriptForCommand(associatedCommand, responseContext)}
+                                          >
+                                            {appLanguage === 'en' ? 'Regenerate sample script' : 'Regenerar sample script'}
+                                          </button>
+                                        </div>
+                                      ) : null}
+                                      {renderPostResponseOutput(postResponseExecution.output, associatedCommand.id)}
+                                    </>
                                   )
                                 ) : (
                                   <p className="muted-small">Este comando no tiene script post-respuesta. Puedes generar un sample o editarlo en Favoritos.</p>
