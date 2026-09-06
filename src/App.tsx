@@ -23,6 +23,7 @@ import {
   APP_LANGUAGE_PREF_STORAGE_KEY,
   applyTranslationsToMutation,
   applyTranslationsToSubtree,
+  getLanguageOptionLabel,
   getTranslatedThemePaletteLabel,
   listSupportedLanguages,
   resolveInitialLanguage,
@@ -9778,9 +9779,7 @@ function App() {
                 >
                   {appLanguageOptions.map((languageOption) => (
                     <option key={`language-${languageOption.id}`} value={languageOption.id}>
-                      {appLanguage === 'en'
-                        ? (languageOption.id === 'es' ? 'Spanish' : 'English')
-                        : (languageOption.id === 'es' ? 'Espanol' : 'Ingles')}
+                      {getLanguageOptionLabel(appLanguage, languageOption.id)}
                     </option>
                   ))}
                 </select>

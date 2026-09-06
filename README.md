@@ -1,5 +1,15 @@
 # PostAIs
 
+## Novedades v1.3.5
+
+- Añadido Galego como idioma completo de la aplicación.
+- Añadido Català como idioma completo de la aplicación.
+- El selector de idioma, la detección regional y la persistencia admiten ahora español, inglés, galego y català.
+- Ampliadas las traducciones para configuración, constructor de endpoints, favoritos, importación/exportación, autenticación, resultados, filtros, scripts de visualización y grupos de parámetros.
+- Se mantienen las terminologías técnicas como GET, POST, Endpoint, Constructor, Body, Headers, JSON, RAW, TLS y API REST.
+
+Consulta el detalle completo en [release-notes-v1.3.5.md](release-notes-v1.3.5.md).
+
 ## Novedades v1.3.4
 
 - Los scripts de visualización se intentan ejecutar también con respuestas grandes; el tamaño del body ya no bloquea previamente la ejecución.

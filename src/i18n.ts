@@ -1,4 +1,4 @@
-﻿export type AppLanguage = 'es' | 'en';
+﻿export type AppLanguage = 'es' | 'en' | 'gl' | 'ca';
 
 export const APP_LANGUAGE_PREF_STORAGE_KEY = 'postais.language';
 
@@ -294,6 +294,402 @@ const EXACT_EN: Record<string, string> = {
   'Sin archivo cargado': 'No file loaded',
 };
 
+const EXACT_GL: Record<string, string> = {
+  'Aplicación para procesamiento de mensajería API REST': 'Aplicación para procesamento de mensaxería API REST',
+  'Para mensajeria GET y POST': 'Para mensaxería GET e POST',
+  'Para mensajería GET y POST': 'Para mensaxería GET e POST',
+  Configuracion: 'Configuración',
+  'Modo claro': 'Modo claro',
+  'Modo oscuro': 'Modo escuro',
+  Estado: 'Estado',
+  Inicio: 'Inicio',
+  Historial: 'Historial',
+  Favoritos: 'Favoritos',
+  Vista: 'Vista',
+  Basica: 'Básica',
+  'Básica': 'Básica',
+  Avanzada: 'Avanzada',
+  Variables: 'Variables',
+  'Variables privadas': 'Variables privadas',
+  Nombre: 'Nome',
+  Persistencia: 'Persistencia',
+  'Valor privado': 'Valor privado',
+  Temporal: 'Temporal',
+  'Local segura': 'Local segura',
+  'No hay secretos.': 'Non hai segredos.',
+  Guardar: 'Gardar',
+  Cancelar: 'Cancelar',
+  Cerrar: 'Pechar',
+  Eliminar: 'Eliminar',
+  Quitar: 'Retirar',
+  Metodo: 'Método',
+  'Método': 'Método',
+  Endpoints: 'Endpoints',
+  'Entorno favorito por defecto': 'Contorno favorito por defecto',
+  'Tupla activa': 'Tupla activa',
+  Activar: 'Activar',
+  'Agregar endpoint GET': 'Engadir endpoint GET',
+  'Agregar endpoint POST': 'Engadir endpoint POST',
+  'Constructor de Endpoint': 'Construtor de Endpoint',
+  'Endpoint base': 'Endpoint base',
+  Comando: 'Comando',
+  'Anadir a endpoint': 'Engadir ao endpoint',
+  'Añadir a endpoint': 'Engadir ao endpoint',
+  'Sustituir endpoint(s)': 'Substituír endpoint(s)',
+  'Lista para enviar': 'Lista para enviar',
+  'Validacion previa': 'Validación previa',
+  'Validación previa': 'Validación previa',
+  'Resultados detallados': 'Resultados detallados',
+  'Historial de solicitudes': 'Historial de solicitudes',
+  'Copiar todo': 'Copiar todo',
+  'Fila anterior': 'Fila anterior',
+  'Fila siguiente': 'Fila seguinte',
+  Importado: 'Importado',
+  Enviado: 'Enviado',
+  Tiempo: 'Tempo',
+  Request: 'Request',
+  Response: 'Response',
+  'Endpoint activo': 'Endpoint activo',
+  'Endpoint POST activo': 'Endpoint POST activo',
+  'Fila de prueba': 'Fila de proba',
+  'Enviar GET activo': 'Enviar GET activo',
+  'Enviar lote GET': 'Enviar lote GET',
+  'Enviar fila actual': 'Enviar fila actual',
+  'Enviar lote completo': 'Enviar lote completo',
+  'Detener despues de la actual': 'Deter despois da actual',
+  'Detener después de la actual': 'Deter despois da actual',
+  'Importar JSON': 'Importar JSON',
+  'Exportar JSON': 'Exportar JSON',
+  'Vaciar historial': 'Baleirar historial',
+  'Consultas registradas': 'Consultas rexistradas',
+  'Tema de colores': 'Tema de cores',
+  'Modo del tema': 'Modo do tema',
+  'Modo de interfaz': 'Modo de interface',
+  'Mostrar listado de comandos favoritos en constructor': 'Mostrar a listaxe de comandos favoritos no construtor',
+  'Idioma de la aplicacion': 'Idioma da aplicación',
+  'Idioma de la aplicación': 'Idioma da aplicación',
+  Espanol: 'Castelán',
+  Español: 'Castelán',
+  English: 'Inglés',
+  'No hay datos': 'Non hai datos',
+  'Guardar endpoint base': 'Gardar endpoint base',
+  'Guardar comando': 'Gardar comando',
+  'Endpoints favoritos': 'Endpoints favoritos',
+  'Comandos favoritos': 'Comandos favoritos',
+  'Peticiones favoritas completas': 'Peticions favoritas completas',
+  'Cargar en inicio': 'Cargar no inicio',
+  'Usar como comando': 'Usar como comando',
+  'Usar como base': 'Usar como base',
+  'Sin archivo cargado': 'Sen ficheiro cargado',
+  'Importa un Excel o CSV para comenzar.': 'Importa un Excel ou CSV para comezar.',
+  'Generar sample script': 'Xerar sample script',
+  'Generar sample script de nuevo': 'Xerar sample script de novo',
+  'Regenerar sample script': 'Rexerar sample script',
+  'Editar script activo': 'Editar script activo',
+  'Resultado correcto': 'Resultado correcto',
+  'Resultado con redireccion o advertencia': 'Resultado con redirección ou advertencia',
+  'Resultado con redirección o advertencia': 'Resultado con redirección ou advertencia',
+  'Resultado con error': 'Resultado con erro',
+  'Visualización de respuesta': 'Visualización da resposta',
+  'Generar script de visualización': 'Xerar script de visualización',
+  'Mostrar menos': 'Mostrar menos',
+  'Copiar respuesta': 'Copiar resposta',
+  'Respuesta copiada al portapapeles.': 'Resposta copiada ao portapapeis.',
+  'No se pudo copiar la respuesta al portapapeles.': 'Non se puido copiar a resposta ao portapapeis.',
+  'No se encontraron campos.': 'Non se atoparon campos.',
+  'Coincidencias del constructor': 'Coincidencias do construtor',
+  'Coincidencias comando': 'Coincidencias do comando',
+  Coincidencias: 'Coincidencias',
+  'No hay coincidencias con el texto actual.': 'Non hai coincidencias co texto actual.',
+  'No hay coincidencias de endpoint base.': 'Non hai coincidencias de endpoint base.',
+  'No hay coincidencias de comando.': 'Non hai coincidencias de comando.',
+  'Campos clave del body': 'Campos clave do body',
+  'Headers de respuesta': 'Headers da resposta',
+  'Filtrar por columna': 'Filtrar por columna',
+  'Filtrar por valor': 'Filtrar por valor',
+  'Todas las columnas': 'Todas as columnas',
+  'Todos los valores': 'Todos os valores',
+  'Añadir filtro': 'Engadir filtro',
+  'Anadir filtro': 'Engadir filtro',
+  'Eliminar filtro': 'Eliminar filtro',
+  'Limpiar filtros': 'Limpar filtros',
+  'Sin filas generadas por el script.': 'Non se xeraron filas polo script.',
+  'No hay filas que coincidan con los filtros seleccionados.': 'Non hai filas que coincidan cos filtros seleccionados.',
+  'Sin fila seleccionada.': 'Non hai ningunha fila seleccionada.',
+  'No hay respuestas para copiar.': 'Non hai respostas para copiar.',
+  'Historial de solicitudes vaciado.': 'Historial de solicitudes baleirado.',
+  'No hay solicitudes en el historial para exportar.': 'Non hai solicitudes no historial para exportar.',
+  'No hay peticiones favoritas para exportar.': 'Non hai peticións favoritas para exportar.',
+  'No hay endpoints base favoritos para exportar.': 'Non hai endpoints base favoritos para exportar.',
+  'No hay comandos favoritos para exportar.': 'Non hai comandos favoritos para exportar.',
+  'No hay endpoints GET configurados.': 'Non hai endpoints GET configurados.',
+  'Agrega al menos un endpoint GET antes de enviar.': 'Engade polo menos un endpoint GET antes de enviar.',
+  'Define una URL de destino antes de enviar.': 'Define unha URL de destino antes de enviar.',
+  'No se pudo validar el lote.': 'Non se puido validar o lote.',
+  'No se pudo generar la vista previa.': 'Non se puido xerar a vista previa.',
+  'Sin autenticacion': 'Sen autenticación',
+  'Sin autenticación': 'Sen autenticación',
+  Autenticacion: 'Autenticación',
+  'Autenticación': 'Autenticación',
+  'Sin variables privadas': 'Sen variables privadas',
+  'Permitir TLS autofirmado (solo pruebas)': 'Permitir TLS autofirmado (só probas)',
+  'Timeout por solicitud (ms)': 'Tempo límite por solicitude (ms)',
+  'Delay entre filas (ms)': 'Espera entre filas (ms)',
+  'Archivo Excel o CSV': 'Ficheiro Excel ou CSV',
+  'Body RAW manual': 'Body RAW manual',
+  'Separador RAW': 'Separador RAW',
+  'Usar primera fila como nombres de campo': 'Usar a primeira fila como nomes de campo',
+  'Headers JSON': 'Headers JSON',
+  'Query params JSON': 'Query params JSON',
+  'Body template JSON': 'Modelo de body JSON',
+  'Corrige estos puntos antes de enviar': 'Corrixe estes puntos antes de enviar',
+  'Avisos detectados': 'Avisos detectados',
+  'Errores detectados en el envio': 'Erros detectados no envío',
+  'Errores detectados en el envío': 'Erros detectados no envío',
+  'Anadir relacion': 'Engadir relación',
+  'Añadir relacion': 'Engadir relación',
+  'Eliminar relacion': 'Eliminar relación',
+  'Eliminar relación': 'Eliminar relación',
+  'Por cada': 'Por cada',
+  'Combinar con': 'Combinar con',
+  'Modo de generacion': 'Modo de xeración',
+  'Modo de generación': 'Modo de xeración',
+  'Bloque simple (1 parametro)': 'Bloque simple (1 parámetro)',
+  'Bloque simple (1 parámetro)': 'Bloque simple (1 parámetro)',
+  'Relacion parametros (producto cartesiano)': 'Relación de parámetros (produto cartesiano)',
+  'Relación parámetros (producto cartesiano)': 'Relación de parámetros (produto cartesiano)',
+  'No se pudo leer el CSV:': 'Non se puido ler o CSV:',
+  'No se pudo leer el Excel:': 'Non se puido ler o Excel:',
+  'Configurada manualmente.': 'Configurada manualmente.',
+  'Autodetectada desde variables privadas.': 'Detectada automaticamente desde variables privadas.',
+};
+
+const PARTIAL_GL: Array<[RegExp, PatternReplacement]> = [
+  [/\bConfiguracion\b/g, 'Configuración'],
+  [/\bConfiguración\b/g, 'Configuración'],
+  [/\bAplicacion\b/g, 'Aplicación'],
+  [/\baplicación\b/g, 'aplicación'],
+  [/\bAjusta\b/g, 'Axusta'],
+  [/\bpreferencias\b/g, 'preferencias'],
+  [/\bErrores\b/g, 'Erros'],
+  [/\bError\b/g, 'Erro'],
+  [/\bavisos\b/g, 'avisos'],
+  [/\bsolicitudes\b/g, 'solicitudes'],
+  [/\bpeticiones\b/g, 'peticións'],
+  [/\bpeticións\b/g, 'peticións'],
+  [/\bAñadir\b/g, 'Engadir'],
+  [/\bAnadir\b/g, 'Engadir'],
+  [/\bAgregar\b/g, 'Engadir'],
+  [/\bSustituir\b/g, 'Substituír'],
+  [/\bDescripcion\b/g, 'Descrición'],
+  [/\bDescripción\b/g, 'Descrición'],
+  [/\bMetodo\b/g, 'Método'],
+  [/\bMétodo\b/g, 'Método'],
+  [/\bEntorno\b/g, 'Contorno'],
+  [/\bEntornos\b/g, 'Contornos'],
+  [/\bMostrar\b/g, 'Mostrar'],
+  [/\bOcultar\b/g, 'Agochar'],
+  [/\bExpandir\b/g, 'Expandir'],
+  [/\bCerrar\b/g, 'Pechar'],
+  [/\bGuardar\b/g, 'Gardar'],
+  [/\bEliminar\b/g, 'Eliminar'],
+  [/\bCopiar\b/g, 'Copiar'],
+  [/\bBuscar\b/g, 'Buscar'],
+  [/\bFiltrar\b/g, 'Filtrar'],
+  [/\bseleccionada\b/g, 'seleccionada'],
+  [/\bseleccionado\b/g, 'seleccionado'],
+  [/\bseleccionados\b/g, 'seleccionados'],
+  [/\bNo hay\b/g, 'Non hai'],
+  [/\bSin\b/g, 'Sen'],
+  [/\bVacio\b/g, 'Baleiro'],
+  [/\bVacío\b/g, 'Baleiro'],
+  [/\bactual\b/g, 'actual'],
+  [/\bcorrectamente\b/g, 'correctamente'],
+  [/\bantes de\b/g, 'antes de'],
+  [/\bpara\b/g, 'para'],
+  [/\by\b/g, 'e'],
+];
+
+const EXACT_CA: Record<string, string> = {
+  'Aplicación para procesamiento de mensajería API REST': 'Aplicació per al processament de missatgeria API REST',
+  'Para mensajeria GET y POST': 'Per a missatgeria GET i POST',
+  'Para mensajería GET y POST': 'Per a missatgeria GET i POST',
+  Configuracion: 'Configuració',
+  'Modo claro': 'Mode clar',
+  'Modo oscuro': 'Mode fosc',
+  Estado: 'Estat',
+  Inicio: 'Inici',
+  Historial: 'Historial',
+  Favoritos: 'Preferits',
+  Vista: 'Vista',
+  Basica: 'Bàsica',
+  'Básica': 'Bàsica',
+  Avanzada: 'Avançada',
+  Variables: 'Variables',
+  'Variables privadas': 'Variables privades',
+  Nombre: 'Nom',
+  Persistencia: 'Persistència',
+  'Valor privado': 'Valor privat',
+  Temporal: 'Temporal',
+  'Local segura': 'Local segura',
+  'No hay secretos.': 'No hi ha secrets.',
+  Guardar: 'Desar',
+  Cancelar: 'Cancel·lar',
+  Cerrar: 'Tancar',
+  Eliminar: 'Eliminar',
+  Quitar: 'Treure',
+  Metodo: 'Mètode',
+  'Método': 'Mètode',
+  Endpoints: 'Endpoints',
+  'Entorno favorito por defecto': 'Entorn preferit per defecte',
+  'Tupla activa': 'Tupla activa',
+  Activar: 'Activar',
+  'Agregar endpoint GET': 'Afegir endpoint GET',
+  'Agregar endpoint POST': 'Afegir endpoint POST',
+  'Constructor de Endpoint': 'Constructor d’Endpoint',
+  'Endpoint base': 'Endpoint base',
+  Comando: 'Comanda',
+  'Anadir a endpoint': 'Afegir a endpoint',
+  'Añadir a endpoint': 'Afegir a endpoint',
+  'Sustituir endpoint(s)': 'Substituir endpoint(s)',
+  'Lista para enviar': 'Preparat per enviar',
+  'Validacion previa': 'Validació prèvia',
+  'Validación previa': 'Validació prèvia',
+  'Resultados detallados': 'Resultats detallats',
+  'Historial de solicitudes': 'Historial de sol·licituds',
+  'Copiar todo': 'Copiar-ho tot',
+  'Fila anterior': 'Fila anterior',
+  'Fila siguiente': 'Fila següent',
+  Importado: 'Importat',
+  Enviado: 'Enviat',
+  Tiempo: 'Temps',
+  Request: 'Request',
+  Response: 'Response',
+  'Endpoint activo': 'Endpoint actiu',
+  'Endpoint POST activo': 'Endpoint POST actiu',
+  'Fila de prueba': 'Fila de prova',
+  'Enviar GET activo': 'Enviar GET actiu',
+  'Enviar lote GET': 'Enviar lot GET',
+  'Enviar fila actual': 'Enviar la fila actual',
+  'Enviar lote completo': 'Enviar el lot complet',
+  'Detener despues de la actual': 'Aturar després de l’actual',
+  'Detener después de la actual': 'Aturar després de l’actual',
+  'Importar JSON': 'Importar JSON',
+  'Exportar JSON': 'Exportar JSON',
+  'Vaciar historial': 'Buidar l’historial',
+  'Consultas registradas': 'Consultes registrades',
+  'Tema de colores': 'Tema de colors',
+  'Modo del tema': 'Mode del tema',
+  'Modo de interfaz': 'Mode d’interfície',
+  'Mostrar listado de comandos favoritos en constructor': 'Mostrar la llista de comandes preferides al constructor',
+  'Idioma de la aplicacion': 'Idioma de l’aplicació',
+  'Idioma de la aplicación': 'Idioma de l’aplicació',
+  Espanol: 'Castellà',
+  Español: 'Castellà',
+  English: 'Anglès',
+  'No hay datos': 'No hi ha dades',
+  'Guardar endpoint base': 'Desar endpoint base',
+  'Guardar comando': 'Desar comanda',
+  'Endpoints favoritos': 'Endpoints preferits',
+  'Comandos favoritos': 'Comandes preferides',
+  'Cargar en inicio': 'Carregar a l’inici',
+  'Usar como comando': 'Usar com a comanda',
+  'Usar como base': 'Usar com a base',
+  'Sin archivo cargado': 'Cap fitxer carregat',
+  'Importa un Excel o CSV para comenzar.': 'Importa un Excel o CSV per començar.',
+  'Generar sample script': 'Generar sample script',
+  'Regenerar sample script': 'Regenerar sample script',
+  'Editar script activo': 'Editar l’script actiu',
+  'Resultado correcto': 'Resultat correcte',
+  'Resultado con redireccion o advertencia': 'Resultat amb redirecció o advertiment',
+  'Resultado con redirección o advertencia': 'Resultat amb redirecció o advertiment',
+  'Resultado con error': 'Resultat amb error',
+  'Visualización de respuesta': 'Visualització de la resposta',
+  'Generar script de visualización': 'Generar script de visualització',
+  'Mostrar menos': 'Mostrar menys',
+  'Copiar respuesta': 'Copiar resposta',
+  'No se encontraron campos.': 'No s’han trobat camps.',
+  'No hay coincidencias con el texto actual.': 'No hi ha coincidències amb el text actual.',
+  'Campos clave del body': 'Camps clau del body',
+  'Headers de respuesta': 'Headers de resposta',
+  'Filtrar por columna': 'Filtrar per columna',
+  'Filtrar por valor': 'Filtrar per valor',
+  'Todas las columnas': 'Totes les columnes',
+  'Todos los valores': 'Tots els valors',
+  'Añadir filtro': 'Afegir filtre',
+  'Anadir filtro': 'Afegir filtre',
+  'Eliminar filtro': 'Eliminar filtre',
+  'Limpiar filtros': 'Netejar filtres',
+  'Sin filas generadas por el script.': 'No s’han generat files amb l’script.',
+  'No hay filas que coincidan con los filtros seleccionados.': 'No hi ha files que coincideixin amb els filtres seleccionats.',
+  'Sin fila seleccionada.': 'No hi ha cap fila seleccionada.',
+  'No hay respuestas para copiar.': 'No hi ha respostes per copiar.',
+  'Sin autenticacion': 'Sense autenticació',
+  'Sin autenticación': 'Sense autenticació',
+  Autenticacion: 'Autenticació',
+  'Autenticación': 'Autenticació',
+  'Sin variables privadas': 'Sense variables privades',
+  'Permitir TLS autofirmado (solo pruebas)': 'Permetre TLS autofirmat (només proves)',
+  'Timeout por solicitud (ms)': 'Temps d’espera per sol·licitud (ms)',
+  'Delay entre filas (ms)': 'Retard entre files (ms)',
+  'Archivo Excel o CSV': 'Fitxer Excel o CSV',
+  'Usar primera fila como nombres de campo': 'Usar la primera fila com a noms de camp',
+  'Body template JSON': 'Plantilla de body JSON',
+  'Corrige estos puntos antes de enviar': 'Corregeix aquests punts abans d’enviar',
+  'Avisos detectados': 'Advertiments detectats',
+  'Errores detectados en el envio': 'Errors detectats en l’enviament',
+  'Errores detectados en el envío': 'Errors detectats en l’enviament',
+  'Anadir relacion': 'Afegir relació',
+  'Añadir relacion': 'Afegir relació',
+  'Eliminar relacion': 'Eliminar relació',
+  'Eliminar relación': 'Eliminar relació',
+  'Por cada': 'Per cada',
+  'Combinar con': 'Combinar amb',
+  'Modo de generacion': 'Mode de generació',
+  'Modo de generación': 'Mode de generació',
+  'Bloque simple (1 parametro)': 'Bloc simple (1 paràmetre)',
+  'Bloque simple (1 parámetro)': 'Bloc simple (1 paràmetre)',
+  'Relacion parametros (producto cartesiano)': 'Relació de paràmetres (producte cartesià)',
+  'Relación parámetros (producto cartesiano)': 'Relació de paràmetres (producte cartesià)',
+  'No se pudo leer el CSV:': 'No s’ha pogut llegir el CSV:',
+  'No se pudo leer el Excel:': 'No s’ha pogut llegir l’Excel:',
+  'Configurada manualmente.': 'Configurada manualment.',
+  'Autodetectada desde variables privadas.': 'Detectada automàticament des de variables privades.',
+};
+
+const PARTIAL_CA: Array<[RegExp, PatternReplacement]> = [
+  [/\bConfiguracion\b/g, 'Configuració'],
+  [/\bConfiguración\b/g, 'Configuració'],
+  [/\bAplicacion\b/g, 'Aplicació'],
+  [/\bAplicación\b/g, 'Aplicació'],
+  [/\bAjusta\b/g, 'Ajusta'],
+  [/\bErrores\b/g, 'Errors'],
+  [/\bError\b/g, 'Error'],
+  [/\bsolicitudes\b/g, 'sol·licituds'],
+  [/\bpeticiones\b/g, 'peticions'],
+  [/\bAñadir\b/g, 'Afegir'],
+  [/\bAnadir\b/g, 'Afegir'],
+  [/\bAgregar\b/g, 'Afegir'],
+  [/\bSustituir\b/g, 'Substituir'],
+  [/\bDescripcion\b/g, 'Descripció'],
+  [/\bDescripción\b/g, 'Descripció'],
+  [/\bMetodo\b/g, 'Mètode'],
+  [/\bMétodo\b/g, 'Mètode'],
+  [/\bEntorno\b/g, 'Entorn'],
+  [/\bEntornos\b/g, 'Entorns'],
+  [/\bOcultar\b/g, 'Amagar'],
+  [/\bCerrar\b/g, 'Tancar'],
+  [/\bGuardar\b/g, 'Desar'],
+  [/\bCopiar\b/g, 'Copiar'],
+  [/\bBuscar\b/g, 'Cercar'],
+  [/\bFiltrar\b/g, 'Filtrar'],
+  [/\bNo hay\b/g, 'No hi ha'],
+  [/\bSin\b/g, 'Sense'],
+  [/\bVacio\b/g, 'Buit'],
+  [/\bVacío\b/g, 'Buit'],
+  [/\by\b/g, 'i'],
+];
+
 type PatternReplacement = string | ((substring: string, ...groups: string[]) => string);
 
 const PARTIAL_EN: Array<[RegExp, PatternReplacement]> = [
@@ -414,7 +810,7 @@ const PARTIAL_EN: Array<[RegExp, PatternReplacement]> = [
 const SKIP_PARENT_TAGS = new Set(['SCRIPT', 'STYLE', 'TEXTAREA']);
 
 export function isSupportedLanguage(value: string | null | undefined): value is AppLanguage {
-  return value === 'es' || value === 'en';
+  return value === 'es' || value === 'en' || value === 'gl' || value === 'ca';
 }
 
 export function detectSystemLanguage(): AppLanguage {
@@ -431,6 +827,14 @@ export function detectSystemLanguage(): AppLanguage {
 
   if (normalized.some((value) => value.startsWith('en'))) {
     return 'en';
+  }
+
+  if (normalized.some((value) => value.startsWith('gl'))) {
+    return 'gl';
+  }
+
+  if (normalized.some((value) => value.startsWith('ca'))) {
+    return 'ca';
   }
 
   if (normalized.some((value) => value.startsWith('es'))) {
@@ -467,13 +871,14 @@ export function translateUiText(language: AppLanguage, text: string): string {
     return text;
   }
 
-  const direct = EXACT_EN[trimmed];
+  const direct = language === 'gl' ? EXACT_GL[trimmed] : language === 'ca' ? EXACT_CA[trimmed] : EXACT_EN[trimmed];
   if (direct) {
     return withOriginalSpacing(text, direct);
   }
 
   let translated = trimmed;
-  for (const [pattern, replacement] of PARTIAL_EN) {
+  const partialTranslations = language === 'gl' ? PARTIAL_GL : language === 'ca' ? PARTIAL_CA : PARTIAL_EN;
+  for (const [pattern, replacement] of partialTranslations) {
     translated = typeof replacement === 'string'
       ? translated.replace(pattern, replacement)
       : translated.replace(pattern, replacement as (substring: string, ...groups: string[]) => string);
@@ -486,7 +891,25 @@ export function listSupportedLanguages(): Array<{ id: AppLanguage; label: string
   return [
     { id: 'es', label: 'Espanol' },
     { id: 'en', label: 'English' },
+    { id: 'gl', label: 'Galego' },
+    { id: 'ca', label: 'Català' },
   ];
+}
+
+export function getLanguageOptionLabel(language: AppLanguage, option: AppLanguage): string {
+  if (language === 'en') {
+    return option === 'es' ? 'Spanish' : option === 'gl' ? 'Galician' : option === 'ca' ? 'Catalan' : 'English';
+  }
+
+  if (language === 'gl') {
+    return option === 'es' ? 'Castelán' : option === 'en' ? 'Inglés' : option === 'ca' ? 'Catalán' : 'Galego';
+  }
+
+  if (language === 'ca') {
+    return option === 'es' ? 'Castellà' : option === 'en' ? 'Anglès' : option === 'gl' ? 'Gallec' : 'Català';
+  }
+
+  return option === 'es' ? 'Español' : option === 'en' ? 'Inglés' : option === 'gl' ? 'Galego' : 'Català';
 }
 
 export function applyTranslationsToSubtree(rootNode: Node, language: AppLanguage): void {
@@ -542,7 +965,9 @@ function processTextNode(textNode: Text, language: AppLanguage, refreshOriginal:
     const currentValue = textNode.nodeValue ?? '';
     if (typeof original === 'string') {
       const translatedOriginal = translateUiText('en', original);
-      if (currentValue === translatedOriginal && currentValue !== original) {
+      const translatedGalician = translateUiText('gl', original);
+      const translatedCatalan = translateUiText('ca', original);
+      if ((currentValue === translatedOriginal || currentValue === translatedGalician || currentValue === translatedCatalan) && currentValue !== original) {
         textNode.nodeValue = original;
         return;
       }
@@ -565,7 +990,7 @@ function processTextNode(textNode: Text, language: AppLanguage, refreshOriginal:
   if (refreshOriginal || !existingOriginal) {
     TEXT_NODE_ORIGINALS.set(textNode, currentValue);
   } else {
-    const translatedFromOriginal = translateUiText('en', existingOriginal);
+    const translatedFromOriginal = translateUiText(language, existingOriginal);
     // If React replaced content with a new Spanish phrase while EN mode is active,
     // refresh the source text. If this mutation came from our own translation,
     // this condition won't trigger.
@@ -575,7 +1000,7 @@ function processTextNode(textNode: Text, language: AppLanguage, refreshOriginal:
   }
 
   const source = TEXT_NODE_ORIGINALS.get(textNode) ?? currentValue;
-  const translated = translateUiText('en', source);
+  const translated = translateUiText(language, source);
   if (translated !== currentValue) {
     textNode.nodeValue = translated;
   }
@@ -600,7 +1025,9 @@ function processElementAttributes(element: Element, language: AppLanguage, refre
       const original = attrMap.get(attributeName);
       if (typeof original === 'string') {
         const translatedOriginal = translateUiText('en', original);
-        if (value === translatedOriginal && value !== original) {
+        const translatedGalician = translateUiText('gl', original);
+        const translatedCatalan = translateUiText('ca', original);
+        if ((value === translatedOriginal || value === translatedGalician || value === translatedCatalan) && value !== original) {
           element.setAttribute(attributeName, original);
           continue;
         }
@@ -618,7 +1045,7 @@ function processElementAttributes(element: Element, language: AppLanguage, refre
     if (refreshOriginal || !existingOriginal) {
       attrMap.set(attributeName, value);
     } else {
-      const translatedFromOriginal = translateUiText('en', existingOriginal);
+      const translatedFromOriginal = translateUiText(language, existingOriginal);
       if (value !== translatedFromOriginal) {
         attrMap.set(attributeName, value);
       }
@@ -629,7 +1056,7 @@ function processElementAttributes(element: Element, language: AppLanguage, refre
       continue;
     }
 
-    const translated = translateUiText('en', source);
+    const translated = translateUiText(language, source);
     if (translated !== value) {
       element.setAttribute(attributeName, translated);
     }
@@ -670,7 +1097,7 @@ export function getTranslatedThemePaletteLabel(language: AppLanguage, paletteId:
 
   switch (paletteId) {
     case 'default':
-      return 'Default';
+      return language === 'gl' ? 'Predeterminada' : language === 'ca' ? 'Predeterminada' : 'Default';
     case 'slate-mint':
       return 'Slate Mint';
     case 'sand-teal':
@@ -678,7 +1105,7 @@ export function getTranslatedThemePaletteLabel(language: AppLanguage, paletteId:
     case 'mono-blue':
       return 'Mono Blue';
     case 'nocturno':
-      return 'Nocturno';
+      return language === 'gl' ? 'Nocturno' : 'Nocturno';
     default:
       return fallbackLabel;
   }
