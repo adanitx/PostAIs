@@ -1,7 +1,6 @@
 type AuthSelectionSource = 'auto' | 'manual' | null;
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
-import * as XLSX from 'xlsx';
 import type {
   AuthorizationScheme,
   BodyMode,
@@ -63,6 +62,9 @@ const FAVORITE_BASE_ENDPOINTS_STORAGE_KEY = 'postais.favoriteBaseEndpoints.v1';
 const FAVORITE_COMMANDS_STORAGE_KEY = 'postais.favoriteCommands.v1';
 const FAVORITE_REQUESTS_STORAGE_KEY = 'postais.favoriteRequests.v1';
 const SHOW_COMPOSER_FAVORITES_LIST_PREF_STORAGE_KEY = 'postais.showComposerFavoritesList';
+const BASIC_METHOD_FILTER_PREF_STORAGE_KEY = 'postais.basicMethodFilter';
+const AUTO_EXPAND_RESULTS_PREF_STORAGE_KEY = 'postais.autoExpandResults';
+const AUTO_EXPAND_RESULTS_LIMIT_PREF_STORAGE_KEY = 'postais.autoExpandResultsLimit';
 const MAX_REQUEST_HISTORY_ENTRIES = 150;
 const MAX_FAVORITE_NAME_LENGTH = 50;
 const MAX_REST_DESCRIPTION_LENGTH = 50;
@@ -78,6 +80,7 @@ const POST_RESPONSE_BLOCKED_PATTERNS: ReadonlyArray<{ pattern: RegExp; reason: s
 type TemplateMode = 'keep-secret-placeholders' | 'mask-secrets';
 type AppSection = 'composer' | 'history' | 'favorites';
 type InterfaceMode = 'basic' | 'advanced';
+const HTTP_METHOD_ORDER: HttpMethod[] = ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'];
 type ThemePaletteId = 'default' | 'slate-mint' | 'sand-teal' | 'mono-blue' | 'nocturno';
 
 function isThemePaletteId(value: string | null): value is ThemePaletteId {
@@ -132,6 +135,7 @@ interface ConfirmDialogState {
   detailLines: string[];
   confirmLabel: string;
   sessionKey?: string;
+  requiredConfirmation?: string;
 }
 
 interface FavoriteRequestsExportFile {
@@ -1060,7 +1064,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isHttpMethod(value: unknown): value is HttpMethod {
-  return value === 'GET' || value === 'POST';
+  return value === 'GET' || value === 'POST' || value === 'PUT' || value === 'PATCH' || value === 'DELETE';
 }
 
 function isBodyMode(value: unknown): value is BodyMode {
@@ -2418,6 +2422,22 @@ function App() {
   const showFavoriteRequestsSection = false;
   const [activeSection, setActiveSection] = useState<AppSection>('composer');
   const [interfaceMode, setInterfaceMode] = useState<InterfaceMode>('basic');
+  const [basicMethodFilterEnabled, setBasicMethodFilterEnabled] = useState(() => {
+    try {
+      return window.localStorage.getItem(BASIC_METHOD_FILTER_PREF_STORAGE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [disabledBasicMethods, setDisabledBasicMethods] = useState<Record<HttpMethod, boolean>>(() => {
+    const defaults = { GET: false, POST: false, PATCH: false, PUT: false, DELETE: false } satisfies Record<HttpMethod, boolean>;
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(BASIC_METHOD_FILTER_PREF_STORAGE_KEY + '.methods') ?? '{}') as Partial<Record<HttpMethod, boolean>>;
+      return { ...defaults, ...HTTP_METHOD_ORDER.reduce((current, candidate) => ({ ...current, [candidate]: stored[candidate] === true }), {}) };
+    } catch {
+      return defaults;
+    }
+  });
   const [method, setMethod] = useState<HttpMethod>(() => {
     try {
       const stored = window.localStorage.getItem(METHOD_PREF_STORAGE_KEY);
@@ -2509,6 +2529,21 @@ function App() {
     }
   });
   const [stopOnError, setStopOnError] = useState(false);
+  const [autoExpandResults, setAutoExpandResults] = useState(() => {
+    try {
+      return window.localStorage.getItem(AUTO_EXPAND_RESULTS_PREF_STORAGE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [autoExpandResultsLimit, setAutoExpandResultsLimit] = useState(() => {
+    try {
+      const stored = Number(window.localStorage.getItem(AUTO_EXPAND_RESULTS_LIMIT_PREF_STORAGE_KEY));
+      return Number.isInteger(stored) && stored > 0 ? Math.min(stored, 100) : 1;
+    } catch {
+      return 1;
+    }
+  });
   const [showImportPanel, setShowImportPanel] = useState(false);
   const [showPreviewPanel, setShowPreviewPanel] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -2531,6 +2566,7 @@ function App() {
   const [selectedFavoriteCommandIdsOrdered, setSelectedFavoriteCommandIdsOrdered] = useState<string[]>([]);
   const [showFavoriteCommandsSelector, setShowFavoriteCommandsSelector] = useState(false);
   const [expandedGetResponsesByKey, setExpandedGetResponsesByKey] = useState<Record<string, boolean>>({});
+  const [expandedResultDetailsByKey, setExpandedResultDetailsByKey] = useState<Record<string, boolean>>({});
   const [dispatchErrors, setDispatchErrors] = useState<string[]>([]);
   const [requestHistory, setRequestHistory] = useState<RequestHistoryEntry[]>(() => loadStoredHistory());
   const [favoriteEndpoints, setFavoriteEndpoints] = useState<FavoriteEndpointEntry[]>(() => loadStoredFavoriteEndpoints());
@@ -2571,6 +2607,7 @@ function App() {
   const [favoritesManagementSearch, setFavoritesManagementSearch] = useState('');
   const [favoritesManagementCommandMethodFilter, setFavoritesManagementCommandMethodFilter] = useState<'ALL' | HttpMethod>('ALL');
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  const [confirmationInput, setConfirmationInput] = useState('');
   const [descriptionDialog, setDescriptionDialog] = useState<DescriptionDialogState | null>(null);
   const [sampleScriptDialog, setSampleScriptDialog] = useState<SampleScriptDialogState | null>(null);
   const [pathParamValues, setPathParamValues] = useState<Record<string, Record<string, string>>>({});
@@ -2647,6 +2684,18 @@ function App() {
   );
   const appLanguageOptions = useMemo(() => listSupportedLanguages(), []);
   const t = (text: string) => translateUiText(appLanguage, text);
+  const visibleMethodOptions = interfaceMode === 'basic' && basicMethodFilterEnabled
+    ? HTTP_METHOD_ORDER.filter((candidateMethod) => !disabledBasicMethods[candidateMethod])
+    : HTTP_METHOD_ORDER;
+
+  useEffect(() => {
+    if (interfaceMode === 'basic' && basicMethodFilterEnabled && disabledBasicMethods[method]) {
+      const fallbackMethod = visibleMethodOptions[0];
+      if (fallbackMethod) {
+        setMethod(fallbackMethod);
+      }
+    }
+  }, [basicMethodFilterEnabled, disabledBasicMethods, interfaceMode, method, visibleMethodOptions]);
   const baseEndpointMatches = useMemo(
     () => getMatchingFavoriteBaseEndpoints(baseEndpoint, contextualFavoriteBaseEndpoints),
     [baseEndpoint, contextualFavoriteBaseEndpoints],
@@ -2823,11 +2872,11 @@ function App() {
         ? []
         :
       extractPlaceholders(
-        method === 'POST' ? (selectedPostEndpoint || endpoint) : endpoint,
+        selectedPostEndpoint || endpoint,
         headersText,
         queryText,
-        ...(method === 'POST' && bodyMode === 'JSON' ? [bodyTemplateText] : []),
-        ...(method === 'POST' && bodyMode === 'RAW' ? [resolveRawBodyForEndpoint(selectedPostEndpoint || endpoint)] : []),
+        ...(bodyMode === 'JSON' ? [bodyTemplateText] : []),
+        ...(bodyMode === 'RAW' ? [resolveRawBodyForEndpoint(selectedPostEndpoint || endpoint)] : []),
       ),
     [bodyMode, bodyTemplateText, endpoint, headersText, method, queryText, rawBodyText, selectedPostEndpoint],
   );
@@ -2840,11 +2889,11 @@ function App() {
       issues.push('Falta definir un endpoint.');
     }
 
-    if (method === 'POST' && bodyMode === 'RAW' && rows.length === 0 && resolveRawBodyForEndpoint(currentEndpoint).trim() === '') {
+    if (method !== 'GET' && bodyMode === 'RAW' && rows.length === 0 && resolveRawBodyForEndpoint(currentEndpoint).trim() === '') {
       issues.push('Se enviara POST con body RAW vacio (sin CSV y sin contenido manual).');
     }
 
-    if (method === 'POST' && bodyMode === 'JSON') {
+    if (method !== 'GET' && bodyMode === 'JSON') {
       try {
         parseJsonInput(bodyTemplateText, 'El body');
       } catch (error) {
@@ -3017,6 +3066,26 @@ function App() {
   }, [allowInsecureTls]);
 
   useEffect(() => {
+    try {
+      window.localStorage.setItem(AUTO_EXPAND_RESULTS_PREF_STORAGE_KEY, autoExpandResults ? 'true' : 'false');
+      window.localStorage.setItem(AUTO_EXPAND_RESULTS_LIMIT_PREF_STORAGE_KEY, String(autoExpandResultsLimit));
+    } catch {
+      // Ignore persistence failures (private mode / restricted storage).
+    }
+  }, [autoExpandResults, autoExpandResultsLimit]);
+
+  useEffect(() => {
+    if (!autoExpandResults || results.length === 0 || results.length > autoExpandResultsLimit) {
+      setExpandedResultDetailsByKey({});
+      return;
+    }
+
+    setExpandedResultDetailsByKey(Object.fromEntries(
+      results.map((result) => [`result-${result.requestPreview.url}-${result.rowNumber}`, true]),
+    ));
+  }, [autoExpandResults, autoExpandResultsLimit, results]);
+
+  useEffect(() => {
     const theme = isNightMode ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', theme);
     document.documentElement.setAttribute('data-theme-palette', selectedThemePalette);
@@ -3175,6 +3244,15 @@ function App() {
       // Ignore persistence failures (private mode / restricted storage).
     }
   }, [favoriteEnvironment]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(BASIC_METHOD_FILTER_PREF_STORAGE_KEY, basicMethodFilterEnabled ? 'true' : 'false');
+      window.localStorage.setItem(`${BASIC_METHOD_FILTER_PREF_STORAGE_KEY}.methods`, JSON.stringify(disabledBasicMethods));
+    } catch {
+      // Ignore persistence failures (private mode / restricted storage).
+    }
+  }, [basicMethodFilterEnabled, disabledBasicMethods]);
 
   useEffect(() => {
     try {
@@ -4102,6 +4180,16 @@ function App() {
     setExpandedGetResponsesByKey((current) => ({ ...current, [key]: !current[key] }));
   }
 
+  function handleResultDetailsToggle(event: React.SyntheticEvent<HTMLDetailsElement>) {
+    const details = event.currentTarget;
+    const key = details.dataset.resultDetailsKey;
+    if (!key) {
+      return;
+    }
+
+    setExpandedResultDetailsByKey((current) => ({ ...current, [key]: details.open }));
+  }
+
   function openResultDetailsContextMenu(event: React.MouseEvent<HTMLElement>) {
     event.preventDefault();
     const detailsElement = event.currentTarget instanceof HTMLDetailsElement
@@ -4553,10 +4641,10 @@ function App() {
     });
   }
 
-  function applyFavoriteEndpoint(value: string, target: 'POST' | 'GET', index?: number) {
+  function applyFavoriteEndpoint(value: string, target: HttpMethod, index?: number) {
     if (target === 'POST') {
       const targetIndex = index ?? focusedPostEndpointIndex ?? selectedPostEndpointIndex;
-      setMethod('POST');
+      setMethod(target);
       setPostEndpointTuples((current) => current.map((entry, entryIndex) => (entryIndex === targetIndex ? value : entry)));
       setSelectedPostEndpointIndex(targetIndex);
       setFocusedPostEndpointIndex(targetIndex);
@@ -5504,7 +5592,7 @@ function App() {
         });
 
         if (saved.ok) {
-          setStatusMessage(`${commandsToExport.length} comando(s) favorito(s) exportados (GET y POST).`);
+          setStatusMessage(`${commandsToExport.length} comando(s) favorito(s) exportados (todos los métodos REST).`);
           return;
         }
 
@@ -5517,7 +5605,7 @@ function App() {
       }
 
       triggerJsonDownload(serialized, filename);
-      setStatusMessage(`${commandsToExport.length} comando(s) favorito(s) exportados (GET y POST).`);
+      setStatusMessage(`${commandsToExport.length} comando(s) favorito(s) exportados (todos los métodos REST).`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : 'No se pudieron exportar los comandos favoritos.');
     }
@@ -5648,6 +5736,7 @@ function App() {
 
     setSkipCurrentDialogForSession(dialog.sessionKey ? skipConfirmSessionKeys.includes(dialog.sessionKey) : false);
     pendingConfirmActionRef.current = action;
+    setConfirmationInput('');
     setConfirmDialog(dialog);
   }
 
@@ -5658,13 +5747,19 @@ function App() {
   }
 
   function confirmDialogAction() {
-    if (confirmDialog?.sessionKey && skipCurrentDialogForSession && !skipConfirmSessionKeys.includes(confirmDialog.sessionKey)) {
-      setSkipConfirmSessionKeys((current) => [...current, confirmDialog.sessionKey as string]);
+    if (confirmDialog?.requiredConfirmation && confirmationInput.trim().toUpperCase() !== confirmDialog.requiredConfirmation) {
+      setStatusMessage(`Escribe ${confirmDialog.requiredConfirmation} para confirmar el lanzamiento.`);
+      return;
     }
 
+    const sessionKey = confirmDialog?.sessionKey;
+    const shouldSkipAfterExecution = Boolean(sessionKey && skipCurrentDialogForSession && !skipConfirmSessionKeys.includes(sessionKey));
     const action = pendingConfirmActionRef.current;
     closeConfirmDialog();
     action?.();
+    if (shouldSkipAfterExecution && sessionKey) {
+      setSkipConfirmSessionKeys((current) => current.includes(sessionKey) ? current : [...current, sessionKey]);
+    }
   }
 
   function appendHistoryEntry(entry: RequestHistoryEntry) {
@@ -5815,7 +5910,7 @@ function App() {
       const importedEntries = fromPostmanCollection(parsed);
 
       if (importedEntries.length === 0) {
-        throw new Error('El JSON no contiene solicitudes GET/POST importables.');
+        throw new Error('El JSON no contiene solicitudes REST importables.');
       }
 
       setRequestHistory((current) => [...importedEntries, ...current].slice(0, MAX_REQUEST_HISTORY_ENTRIES));
@@ -5875,7 +5970,7 @@ function App() {
   function createRequestPreview(row: ImportedRow, endpointOverride?: string, tupleId?: string): RequestPreview {
     const parsedHeaders = method === 'GET' ? {} : parseJsonInput(headersText, 'Las cabeceras');
     const parsedQuery = method === 'GET' ? {} : parseJsonInput(queryText, 'Los query params');
-    const parsedBody = method === 'POST' && bodyMode === 'JSON' ? parseJsonInput(bodyTemplateText, 'El body') : undefined;
+    const parsedBody = method !== 'GET' && bodyMode === 'JSON' ? parseJsonInput(bodyTemplateText, 'El body') : undefined;
     const endpointSource = resolveEndpointWithPathParams(endpointOverride ?? (composedEndpoint || endpoint), tupleId);
     const finalUrl = new URL(applyStringTemplate(endpointSource, row.fields, 'mask-secrets'));
     const query = normalizeStringMap(applyValueTemplate(parsedQuery, row.fields, 'mask-secrets'), 'Los query params');
@@ -5902,7 +5997,7 @@ function App() {
       query,
       bodyMode,
       body:
-        method !== 'POST'
+        method === 'GET'
           ? undefined
           : bodyMode === 'RAW'
             ? resolvedRawBody
@@ -5915,7 +6010,7 @@ function App() {
   function buildPayload(row: ImportedRow, endpointOverride?: string, tupleId?: string): PostRequestPayload {
     const parsedHeaders = method === 'GET' ? {} : parseJsonInput(headersText, 'Las cabeceras');
     const parsedQuery = method === 'GET' ? {} : parseJsonInput(queryText, 'Los query params');
-    const parsedBody = method === 'POST' && bodyMode === 'JSON' ? parseJsonInput(bodyTemplateText, 'El body') : undefined;
+    const parsedBody = method !== 'GET' && bodyMode === 'JSON' ? parseJsonInput(bodyTemplateText, 'El body') : undefined;
     const endpointSource = resolveEndpointWithPathParams(endpointOverride ?? (composedEndpoint || endpoint), tupleId);
     const finalUrl = new URL(applyStringTemplate(endpointSource, row.fields, 'keep-secret-placeholders'));
 
@@ -5937,7 +6032,7 @@ function App() {
       query: normalizeStringMap(applyValueTemplate(parsedQuery, row.fields, 'keep-secret-placeholders'), 'Los query params'),
       bodyMode,
       body:
-        method !== 'POST'
+        method === 'GET'
           ? undefined
           : bodyMode === 'RAW'
             ? resolvedRawBody
@@ -6615,6 +6710,7 @@ function App() {
 
     if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')) {
       try {
+        const XLSX = await import('xlsx');
         const buffer = await file.arrayBuffer();
         const workbook = XLSX.read(buffer, { type: 'array' });
         const [firstSheetName] = workbook.SheetNames;
@@ -6711,7 +6807,7 @@ function App() {
 
     const effectiveEndpoint = endpointOverride ?? (composedEndpoint || endpoint);
     const resolvedEndpoint = resolveEndpointWithPathParams(effectiveEndpoint, tupleId);
-    const resolvedRawForValidation = method === 'POST' && bodyMode === 'RAW'
+    const resolvedRawForValidation = method !== 'GET' && bodyMode === 'RAW'
       ? (tupleId !== undefined
         ? resolveRawBodyForPostTuple(tupleId)
         : resolveRawBodyForEndpoint(effectiveEndpoint))
@@ -6743,8 +6839,8 @@ function App() {
       resolvedEndpoint,
       headersText,
       queryText,
-      ...(method === 'POST' && bodyMode === 'JSON' ? [bodyTemplateText] : []),
-      ...(method === 'POST' && bodyMode === 'RAW' ? [resolvedRawForValidation] : []),
+      ...(method !== 'GET' && bodyMode === 'JSON' ? [bodyTemplateText] : []),
+      ...(method !== 'GET' && bodyMode === 'RAW' ? [resolvedRawForValidation] : []),
     );
 
     const missingColumns = requiredVariables.filter((column) => !csvColumns.includes(column));
@@ -6757,8 +6853,8 @@ function App() {
       resolvedEndpoint,
       headersText,
       queryText,
-      ...(method === 'POST' && bodyMode === 'JSON' ? [bodyTemplateText] : []),
-      ...(method === 'POST' && bodyMode === 'RAW' ? [resolvedRawForValidation] : []),
+      ...(method !== 'GET' && bodyMode === 'JSON' ? [bodyTemplateText] : []),
+      ...(method !== 'GET' && bodyMode === 'RAW' ? [resolvedRawForValidation] : []),
     ].some((source) => source.includes('{{secret:'))) {
       throw new Error('Hay placeholders privados definidos pero no existe ninguna variable privada cargada.');
     }
@@ -7266,11 +7362,11 @@ function App() {
   function requestSendCurrentRow() {
     const selectedRow = rows[selectedRowIndex] ?? { rowNumber: 1, cells: [], fields: {} };
     const sendingWithoutRows = rows.length === 0;
-    const selectedTupleRaw = method === 'POST' && bodyMode === 'RAW' ? resolveRawBodyForPostTuple(selectedPostEndpointTupleId) : '';
-    const selectedResolvedEndpoint = method === 'POST'
+    const selectedTupleRaw = method !== 'GET' && bodyMode === 'RAW' ? resolveRawBodyForPostTuple(selectedPostEndpointTupleId) : '';
+    const selectedResolvedEndpoint = method !== 'GET'
       ? resolveEndpointWithPathParams(selectedPostEndpoint || endpoint, selectedPostEndpointTupleId)
       : (composedEndpoint || endpoint);
-    const sendingEmptyRaw = method === 'POST' && bodyMode === 'RAW' && sendingWithoutRows && selectedTupleRaw.trim() === '';
+    const sendingEmptyRaw = method !== 'GET' && bodyMode === 'RAW' && sendingWithoutRows && selectedTupleRaw.trim() === '';
 
     openConfirmDialog(
       {
@@ -7280,15 +7376,17 @@ function App() {
           `Metodo: ${method}`,
           `Fila: ${selectedRow.rowNumber}`,
           `Endpoint: ${selectedResolvedEndpoint}`,
-          ...(method === 'POST' && bodyMode === 'RAW' ? [`RAW asociado: ${formatRawForValidation(selectedTupleRaw)}`] : []),
+          ...(method !== 'GET' && bodyMode === 'RAW' ? [`RAW asociado: ${formatRawForValidation(selectedTupleRaw)}`] : []),
           ...(sendingWithoutRows ? ['Sin CSV: se enviara una solicitud unica.'] : []),
           ...(sendingEmptyRaw ? ['Aviso: el body RAW se enviara vacio.'] : []),
+          ...(method !== 'GET' && method !== 'POST' ? [`Aviso: vas a lanzar una operación ${method} que puede modificar datos.`] : []),
         ],
         confirmLabel: 'Enviar fila',
-        sessionKey: 'send-current-row',
+        sessionKey: method !== 'GET' && method !== 'POST' ? `send-${method}-current-row` : 'send-current-row',
+        requiredConfirmation: method !== 'GET' && method !== 'POST' ? 'CONFIRMAR' : undefined,
       },
       () => {
-        dispatchRows(rows.length === 0 ? [selectedRow] : rows.slice(selectedRowIndex, selectedRowIndex + 1), method === 'POST' ? [selectedPostEndpoint] : undefined, method === 'POST' ? [selectedPostEndpointTupleId] : undefined);
+        dispatchRows(rows.length === 0 ? [selectedRow] : rows.slice(selectedRowIndex, selectedRowIndex + 1), method !== 'GET' ? [selectedPostEndpoint] : undefined, method !== 'GET' ? [selectedPostEndpointTupleId] : undefined);
       },
     );
   }
@@ -7296,10 +7394,10 @@ function App() {
   function requestSendBatch() {
     const rowsToSend = rows.length === 0 ? [{ rowNumber: 1, cells: [], fields: {} }] : rows;
     const sendingWithoutRows = rows.length === 0;
-    const selectedTupleRaw = method === 'POST' && bodyMode === 'RAW' ? resolveRawBodyForPostTuple(selectedPostEndpointTupleId) : '';
-    const sendingEmptyRaw = method === 'POST' && bodyMode === 'RAW' && sendingWithoutRows && selectedTupleRaw.trim() === '';
+    const selectedTupleRaw = method !== 'GET' && bodyMode === 'RAW' ? resolveRawBodyForPostTuple(selectedPostEndpointTupleId) : '';
+    const sendingEmptyRaw = method !== 'GET' && bodyMode === 'RAW' && sendingWithoutRows && selectedTupleRaw.trim() === '';
     const activePostCount = postEndpointTuples.filter((item) => item.trim() !== '').length;
-    const postTupleValidationLines = method === 'POST' && bodyMode === 'RAW' ? buildPostTupleValidationLines() : [];
+    const postTupleValidationLines = method !== 'GET' && bodyMode === 'RAW' ? buildPostTupleValidationLines() : [];
 
     openConfirmDialog(
       {
@@ -7308,16 +7406,18 @@ function App() {
         detailLines: [
           `Metodo: ${method}`,
           `Filas: ${rowsToSend.length}`,
-          ...(method === 'POST' ? [`Endpoints POST: ${activePostCount}`] : [`Endpoint: ${composedEndpoint || endpoint}`]),
+          ...(method !== 'GET' ? [`Endpoints ${method}: ${activePostCount}`] : [`Endpoint: ${composedEndpoint || endpoint}`]),
           ...postTupleValidationLines,
           ...(sendingWithoutRows ? ['Sin CSV: se enviara una solicitud unica.'] : []),
           ...(sendingEmptyRaw ? ['Aviso: el body RAW se enviara vacio.'] : []),
+          ...(method !== 'GET' && method !== 'POST' ? [`Aviso: vas a lanzar una operación ${method} que puede modificar datos.`] : []),
         ],
         confirmLabel: 'Enviar lote',
-        sessionKey: 'send-post-batch',
+        sessionKey: method !== 'GET' && method !== 'POST' ? `send-${method}-batch` : 'send-post-batch',
+        requiredConfirmation: method !== 'GET' && method !== 'POST' ? 'CONFIRMAR' : undefined,
       },
       () => {
-        dispatchRows(rowsToSend, method === 'POST' ? postEndpointTuples : undefined, method === 'POST' ? postEndpointTupleIds : undefined);
+        dispatchRows(rowsToSend, method !== 'GET' ? postEndpointTuples : undefined, method !== 'GET' ? postEndpointTupleIds : undefined);
       },
     );
   }
@@ -7354,13 +7454,17 @@ function App() {
   }
 
   function requestExecuteFavorite(entry: FavoriteRequestEntry) {
+    const requiresMutationConfirmation = entry.method === 'PUT' || entry.method === 'PATCH' || entry.method === 'DELETE';
     openConfirmDialog(
       {
         title: 'Confirmar repeticion de favorito',
-        description: 'Se va a repetir una peticion favorita completa.',
+        description: requiresMutationConfirmation
+          ? `Vas a lanzar una operación ${entry.method} que puede modificar datos.`
+          : 'Se va a repetir una peticion favorita completa.',
         detailLines: [`Nombre: ${entry.name}`, `Metodo: ${entry.method}`, `URL: ${entry.url}`],
         confirmLabel: 'Repetir peticion',
-        sessionKey: 'repeat-favorite-request',
+        sessionKey: requiresMutationConfirmation ? `repeat-favorite-${entry.method}` : 'repeat-favorite-request',
+        requiredConfirmation: requiresMutationConfirmation ? 'CONFIRMAR' : undefined,
       },
       () => {
         void executeFavoriteRequest(entry);
@@ -7374,9 +7478,8 @@ function App() {
         {statusMessage}
       </div>
       <aside className="hero-panel">
-        <p className="eyebrow">PostAIS</p>
+        <p className="eyebrow">PostAIs</p>
         <h1>Aplicación para procesamiento de mensajería API REST</h1>
-        <p className="lede">Para mensajería GET y POST</p>
         <button
           type="button"
           className="theme-toggle-button"
@@ -7560,8 +7663,14 @@ function App() {
           <label className="field compact-field">
             <span>Metodo</span>
             <select value={method} onChange={(event) => setMethod(event.target.value as HttpMethod)}>
-              <option value="POST">POST</option>
-              <option value="GET">GET</option>
+              <option value={method} hidden>{method}</option>
+              {visibleMethodOptions
+                .filter((candidateMethod) => candidateMethod !== method)
+                .map((candidateMethod) => (
+                  <option key={`method-option-${candidateMethod}`} value={candidateMethod}>
+                    {candidateMethod}
+                  </option>
+                ))}
             </select>
           </label>
 
@@ -8210,7 +8319,7 @@ function App() {
             <p>
               {method === 'GET'
                 ? `${getEndpointTuples.filter((item) => item.trim() !== '').length} endpoint(s) GET listos para ejecutar.`
-                : `${postEndpointTuples.filter((item) => item.trim() !== '').length} endpoint(s) POST listos para ejecutar.`}
+                : `${postEndpointTuples.filter((item) => item.trim() !== '').length} endpoint(s) ${method} listos para ejecutar.`}
             </p>
             <p>
               {method === 'GET'
@@ -8218,7 +8327,7 @@ function App() {
                 : rows.length > 0
                   ? `${rows.length} filas disponibles. Variables detectadas: ${expectedVariables.join(', ') || 'ninguna'}.`
                   : bodyMode === 'RAW'
-                    ? `Sin CSV: se enviara una solicitud POST usando Body RAW manual${resolveRawBodyForEndpoint(selectedPostEndpoint).trim() ? '.' : ' vacio.'}`
+                    ? `Sin CSV: se enviara una solicitud ${method} usando Body RAW manual${resolveRawBodyForEndpoint(selectedPostEndpoint).trim() ? '.' : ' vacio.'}`
                     : 'Carga un Excel o CSV para validar columnas y preparar el lote.'}
             </p>
           </div>
@@ -8263,11 +8372,11 @@ function App() {
             ) : (
               <>
                 <label className="field compact-field">
-                  <span>Endpoint POST activo</span>
+                  <span>Endpoint {method} activo</span>
                   <select value={selectedPostEndpointIndex} onChange={(event) => setSelectedPostEndpointIndex(Number(event.target.value))} disabled={postEndpointTuples.length === 0 || isSending}>
                     {postEndpointTuples.map((endpointTuple, index) => (
                       <option key={`post-endpoint-${index}`} value={index}>
-                        POST {index + 1}: {endpointTuple || '(vacio)'}
+                        {method} {index + 1}: {endpointTuple || '(vacio)'}
                       </option>
                     ))}
                   </select>
@@ -8357,7 +8466,14 @@ function App() {
                           : null;
 
                         return (
-                          <details key={`result-${group.endpoint}-${result.rowNumber}`} className={`result-card result-${getResultTone(result)}`} onContextMenu={openResultDetailsContextMenu}>
+                          <details
+                            key={`result-${group.endpoint}-${result.rowNumber}`}
+                            className={`result-card result-${getResultTone(result)}`}
+                            data-result-details-key={`result-${group.endpoint}-${result.rowNumber}`}
+                            open={Boolean(expandedResultDetailsByKey[`result-${group.endpoint}-${result.rowNumber}`])}
+                            onToggle={handleResultDetailsToggle}
+                            onContextMenu={openResultDetailsContextMenu}
+                          >
                             <summary className="result-summary">
                               <div className="result-meta">
                                 <strong>GET {result.row.rowNumber}</strong>
@@ -8510,7 +8626,14 @@ function App() {
                     </div>
                   ))
                 : results.map((result) => (
-                    <details key={`result-${result.rowNumber}`} className={`result-card result-${getResultTone(result)}`} onContextMenu={openResultDetailsContextMenu}>
+                    <details
+                      key={`result-${result.rowNumber}`}
+                      className={`result-card result-${getResultTone(result)}`}
+                      data-result-details-key={`result-${result.requestPreview.url}-${result.rowNumber}`}
+                      open={Boolean(expandedResultDetailsByKey[`result-${result.requestPreview.url}-${result.rowNumber}`])}
+                      onToggle={handleResultDetailsToggle}
+                      onContextMenu={openResultDetailsContextMenu}
+                    >
                       <summary className="result-summary">
                         <div className="result-meta">
                           <strong>Fila {result.row.rowNumber}</strong>
@@ -8763,7 +8886,7 @@ function App() {
                           <input
                             value={favoriteBaseEndpointDraft.description}
                             onChange={(event) => setFavoriteBaseEndpointDraft((current) => ({ ...current, description: event.target.value }))}
-                            placeholder="Aplica a GET y POST"
+                            placeholder="Aplica a todos los métodos REST"
                           />
                         </label>
                         <label className="field compact-field">
@@ -8959,7 +9082,7 @@ function App() {
                   <span>{filteredFavoriteBaseEndpointsForManagement.length}</span>
                 </div>
                 <div className="favorites-panel-intro">
-                  <p className="muted-small">Los endpoints base se comparten entre GET y POST en el constructor.</p>
+                  <p className="muted-small">Los endpoints base se comparten entre todos los métodos REST en el constructor.</p>
                 </div>
                 {filteredFavoriteBaseEndpointsForManagement.length === 0 ? (
                   <p className="muted">No hay endpoints base favoritos que coincidan para este entorno.</p>
@@ -9364,6 +9487,19 @@ function App() {
                   <li key={line}>{line}</li>
                 ))}
               </ul>
+              {confirmDialog.requiredConfirmation ? (
+                <label className="field confirm-word-field">
+                  <span>{`Escribe ${confirmDialog.requiredConfirmation} para continuar`}</span>
+                  <input
+                    type="text"
+                    value={confirmationInput}
+                    onChange={(event) => setConfirmationInput(event.target.value)}
+                    autoComplete="off"
+                    autoCapitalize="characters"
+                    spellCheck={false}
+                  />
+                </label>
+              ) : null}
               {confirmDialog.sessionKey ? (
                 <label className="checkbox-field confirm-session-checkbox">
                   <input
@@ -9378,7 +9514,12 @@ function App() {
                 <button type="button" className="ghost-button" onClick={closeConfirmDialog}>
                   Cancelar
                 </button>
-                <button type="button" className="primary-button" onClick={confirmDialogAction}>
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={confirmDialogAction}
+                  disabled={Boolean(confirmDialog.requiredConfirmation && confirmationInput.trim().toUpperCase() !== confirmDialog.requiredConfirmation)}
+                >
                   {confirmDialog.confirmLabel}
                 </button>
               </div>
@@ -9807,6 +9948,41 @@ function App() {
                 </select>
               </label>
 
+              <div className="field settings-method-filter-field">
+                <label className="checkbox-field compact-checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={basicMethodFilterEnabled}
+                    onChange={(event) => setBasicMethodFilterEnabled(event.target.checked)}
+                  />
+                  <span>{t('Deshabilitar métodos en vista básica')}</span>
+                </label>
+                {basicMethodFilterEnabled ? (
+                  <div className="settings-method-filter-list">
+                    <small className="muted-small">{t('Marca los métodos que no quieres mostrar en la vista básica.')}</small>
+                    {HTTP_METHOD_ORDER.map((candidateMethod) => (
+                      <label key={`basic-method-disabled-${candidateMethod}`} className="checkbox-field compact-checkbox-field">
+                        <input
+                          type="checkbox"
+                          checked={disabledBasicMethods[candidateMethod]}
+                          onChange={(event) => {
+                            const nextValue = event.target.checked;
+                            setDisabledBasicMethods((current) => {
+                              const next = { ...current, [candidateMethod]: nextValue };
+                              if (HTTP_METHOD_ORDER.every((item) => next[item])) {
+                                return { ...next, [candidateMethod]: false };
+                              }
+                              return next;
+                            });
+                          }}
+                        />
+                        <span>{candidateMethod}</span>
+                      </label>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+
               <label className="field checkbox-field compact-checkbox-field settings-dialog-checkbox">
                 <input type="checkbox" checked={allowInsecureTls} onChange={(event) => setAllowInsecureTls(event.target.checked)} />
                 <span>{appLanguage === 'en' ? 'Allow self-signed TLS (testing only)' : 'Permitir TLS autofirmado (solo pruebas)'}</span>
@@ -9816,6 +9992,31 @@ function App() {
                 <input type="checkbox" checked={stopOnError} onChange={(event) => setStopOnError(event.target.checked)} />
                 <span>{appLanguage === 'en' ? 'Stop batch on first error' : 'Detener el lote al primer error'}</span>
               </label>
+
+              <label className="field checkbox-field compact-checkbox-field settings-dialog-checkbox">
+                <input type="checkbox" checked={autoExpandResults} onChange={(event) => setAutoExpandResults(event.target.checked)} />
+                <span>{t('Expandir automáticamente los resultados detallados')}</span>
+              </label>
+
+              {autoExpandResults ? (
+                <label className="field settings-dialog-number-field">
+                  <span>{t('Máximo de resultados detallados a abrir automáticamente')}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    step={1}
+                    value={autoExpandResultsLimit}
+                    onChange={(event) => {
+                      const parsed = Number(event.target.value);
+                      if (Number.isInteger(parsed) && parsed >= 1) {
+                        setAutoExpandResultsLimit(Math.min(parsed, 100));
+                      }
+                    }}
+                  />
+                  <small className="muted-small">{t('Si el número de resultados supera este límite, no se abrirá ninguno automáticamente.')}</small>
+                </label>
+              ) : null}
 
               <label className="field">
                 <span>Mostrar listado de comandos favoritos en constructor</span>

@@ -414,7 +414,8 @@ ipcMain.handle('file:saveText', async (_event, payload) => {
 
 ipcMain.handle('http:request', async (_event, request) => {
   const startedAt = Date.now();
-  const method = request.method === 'GET' ? 'GET' : 'POST';
+  const supportedMethods = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+  const method = supportedMethods.has(request.method) ? request.method : 'GET';
   const timeoutMs = normalizeTimeout(request.timeoutMs);
   const allowInsecureTls = request.allowInsecureTls === true;
   const controller = new AbortController();
@@ -453,7 +454,7 @@ ipcMain.handle('http:request', async (_event, request) => {
       process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
     }
 
-    if (method === 'POST') {
+    if (method !== 'GET') {
       const resolvedBody = resolveSecrets(request.body ?? null);
       requestInit.body = request.bodyMode === 'RAW' ? String(resolvedBody ?? '') : JSON.stringify(resolvedBody);
     }

@@ -4,7 +4,7 @@ export interface ImportedRow {
   fields: Record<string, string>;
 }
 
-export type HttpMethod = 'GET' | 'POST';
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 export type BodyMode = 'RAW' | 'JSON';
 export type AuthorizationScheme = 'NONE' | 'BASIC';
 export type FavoriteEnvironment = 'DEV' | 'QA' | 'PROD';

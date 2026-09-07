@@ -5,6 +5,7 @@ dist-electron/
 release/
 portable/
 .packtmp/
+backups/
 resources/
 locales/
 *.exe

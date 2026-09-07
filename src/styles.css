@@ -2420,6 +2420,27 @@ pre {
   grid-column: span 1;
 }
 
+.settings-dialog-number-field-disabled {
+  opacity: 0.45;
+}
+
+.settings-dialog-number-field-disabled input {
+  cursor: not-allowed;
+}
+
+.settings-method-filter-field {
+  gap: 0.65rem;
+}
+
+.settings-method-filter-list {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-subtle) 72%, transparent 28%);
+}
+
 .sample-script-search-row {
   display: grid;
   gap: 0.55rem;

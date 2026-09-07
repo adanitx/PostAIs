@@ -1,5 +1,17 @@
 # PostAIs
 
+## Novedades v1.3.6
+
+- Añadidos los métodos REST `PUT`, `PATCH` y `DELETE` junto a `GET` y `POST`.
+- Las operaciones `PUT`, `PATCH` y `DELETE` requieren escribir `CONFIRMAR` antes de ejecutarse.
+- Se puede omitir ese aviso durante la sesión después de una confirmación válida.
+- Añadida configuración para ocultar métodos concretos en la vista Básica.
+- Añadida expansión automática de resultados detallados con límite configurable.
+- La librería `xlsx` se carga bajo demanda al seleccionar un archivo Excel, reduciendo el tamaño del bundle inicial.
+- Corregidas y ampliadas las traducciones de español, English, Galego y Català.
+
+Consulta el detalle completo en [release-notes-v1.3.6.md](release-notes-v1.3.6.md).
+
 ## Novedades v1.3.5
 
 - Añadido Galego como idioma completo de la aplicación.
@@ -20,7 +32,7 @@ Consulta el detalle completo en [release-notes-v1.3.5.md](release-notes-v1.3.5.m
 
 Consulta el detalle completo en [release-notes-v1.3.4.md](release-notes-v1.3.4.md).
 
-Aplicacion de escritorio basada en Electron + React para enviar lotes HTTP desde un CSV. Ahora soporta GET y POST, query params por plantilla, variables privadas de autenticacion y detalle completo de errores por fila.
+Aplicacion de escritorio basada en Electron + React para enviar lotes HTTP desde un CSV. Soporta toda la mensajería REST, query params por plantilla, variables privadas de autenticacion y detalle completo de errores por fila.
 
 ## Novedades recientes (v1.3.1)
 
