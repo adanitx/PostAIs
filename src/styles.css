@@ -1414,6 +1414,12 @@ pre {
   align-content: start;
 }
 
+.favorite-match-button-active {
+  border-color: color-mix(in srgb, var(--magenta) 52%, var(--line) 48%) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--magenta) 16%, transparent 84%);
+  background: var(--input-bg-focus);
+}
+
 .favorite-summary-surface {
   border-radius: 18px;
   background: color-mix(in srgb, var(--panel-subtle) 80%, transparent 20%);
@@ -1821,6 +1827,8 @@ pre {
 .history-meta-grid {
   display: grid;
   gap: 0.9rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .history-list {
@@ -1884,6 +1892,60 @@ pre {
 
 .history-meta-card-wide {
   grid-column: span 1;
+}
+
+.history-source-download-button {
+  justify-self: start;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.82rem;
+}
+
+.history-batch-explorer {
+  display: grid;
+  gap: 0.6rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.history-batch-search-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+
+.history-batch-search-input {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.history-batch-row-error {
+  background: color-mix(in srgb, var(--danger-bg) 60%, transparent 40%);
+}
+
+.history-batch-view-response-button {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.history-batch-response-panel {
+  border: 1px solid var(--result-kpi-line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--result-kpi-bg) 92%, transparent 8%);
+  padding: 0.65rem 0.8rem;
+  display: grid;
+  gap: 0.55rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.history-batch-response-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
 }
 
 .result-detail-grid {
@@ -1951,6 +2013,8 @@ pre {
   padding: 0.8rem;
   display: grid;
   gap: 0.65rem;
+  min-width: 0;
+  max-width: 100%;
   border: 1px solid color-mix(in srgb, var(--result-kpi-line) 82%, transparent 18%);
 }
 
@@ -2078,6 +2142,8 @@ pre {
   padding: 0.65rem;
   display: grid;
   gap: 0.55rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .post-response-script-header {
@@ -2121,8 +2187,9 @@ pre {
 
 .post-response-table-wrap {
   width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
+  max-width: 100%;
+  overflow: auto;
+  max-height: 60vh;
   min-width: 0;
   border-radius: 8px;
   box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.08);
@@ -2130,8 +2197,10 @@ pre {
 
 .post-response-table-container {
   width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
+  max-width: 100%;
+  min-width: 0;
+  overflow: auto;
+  max-height: 60vh;
 }
 
 .post-response-table-controls {
@@ -2214,6 +2283,8 @@ pre {
 .post-response-table-block {
   display: grid;
   gap: 0.55rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .result-visual-grid {
@@ -2365,6 +2436,7 @@ pre {
   place-items: center;
   z-index: 30;
   padding: 1rem;
+  overflow-y: auto;
 }
 
 .confirm-dialog {
@@ -2377,6 +2449,9 @@ pre {
   display: grid;
   gap: 0.8rem;
   max-height: calc(100vh - 2rem);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .confirm-detail-list {
@@ -2396,6 +2471,7 @@ pre {
 
 .settings-dialog {
   width: min(620px, 100%);
+  align-content: start;
 }
 
 .settings-dialog .field {
@@ -2426,6 +2502,39 @@ pre {
 
 .settings-dialog-number-field-disabled input {
   cursor: not-allowed;
+}
+
+.history-script-panel {
+  border: 1px solid var(--result-kpi-line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--result-kpi-bg) 92%, transparent 8%);
+  padding: 0.65rem 0.8rem;
+  margin-top: 0.9rem;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.history-script-panel > summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+.history-script-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.history-script-panel > summary::before {
+  content: '▶';
+  display: inline-block;
+  margin-right: 0.5rem;
+  font-size: 0.7rem;
+  transition: transform 160ms ease;
+}
+
+.history-script-panel[open] > summary::before {
+  transform: rotate(90deg);
 }
 
 .settings-method-filter-field {
@@ -2876,11 +2985,13 @@ pre {
   gap: 0.7rem;
   flex-wrap: wrap;
   width: 100%;
+  min-width: 0;
 }
 
 .post-response-table-filter-field {
   min-width: 180px;
   flex: 1 1 180px;
+  max-width: 100%;
 }
 
 .post-response-table-filter-field select {

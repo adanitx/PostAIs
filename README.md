@@ -1,5 +1,14 @@
 # PostAIs
 
+## Novedades v1.3.7
+
+- El historial de lotes conserva las respuestas por fila, permite buscarlas y descargar el archivo de origen o las filas fallidas.
+- La respuesta abierta desde el historial ejecuta su visualización post-respuesta, igual que en Inicio.
+- El menú contextual para recoger una respuesta está disponible dentro del detalle y devuelve la vista a la fila consultada.
+- Un `GET` ejecutado como lote con una sola solicitud se registra como solicitud individual, no como lote.
+
+Consulta el detalle completo en [release-notes-v1.3.7.md](release-notes-v1.3.7.md).
+
 ## Novedades v1.3.6
 
 - Añadidos los métodos REST `PUT`, `PATCH` y `DELETE` junto a `GET` y `POST`.

@@ -3,6 +3,8 @@ import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
 import type {
   AuthorizationScheme,
+  BatchHistorySummary,
+  BatchRequestEntry,
   BodyMode,
   DispatchResult,
   FavoriteBaseEndpointEntry,
@@ -66,6 +68,10 @@ const BASIC_METHOD_FILTER_PREF_STORAGE_KEY = 'postais.basicMethodFilter';
 const AUTO_EXPAND_RESULTS_PREF_STORAGE_KEY = 'postais.autoExpandResults';
 const AUTO_EXPAND_RESULTS_LIMIT_PREF_STORAGE_KEY = 'postais.autoExpandResultsLimit';
 const MAX_REQUEST_HISTORY_ENTRIES = 150;
+const MAX_HISTORY_SCRIPT_OUTPUT_SIZE = 1048576;
+const MAX_BATCH_SUMMARY_SIZE = 2097152;
+const HISTORY_SCRIPT_CACHE_HOURS_PREF_STORAGE_KEY = 'postais.historyScriptCacheHours';
+const DEFAULT_HISTORY_SCRIPT_CACHE_HOURS = 24;
 const MAX_FAVORITE_NAME_LENGTH = 50;
 const MAX_REST_DESCRIPTION_LENGTH = 50;
 const MAX_RESPONSE_PREVIEW_LINES = 50;
@@ -303,6 +309,18 @@ function getResponseDetailsText(result: DispatchResult): string {
     body: result.responseBody,
     errorDetail: result.errorDetail,
   });
+}
+
+function buildResultClipboardText(result: DispatchResult, indexLabel?: string): string {
+  return [
+    ...(indexLabel ? [indexLabel] : []),
+    `method=${result.method}`,
+    `status=${result.status} ${result.statusText}`,
+    `durationMs=${result.durationMs}`,
+    `Date: ${formatHistoryDate(result.receivedAt ?? new Date().toISOString())}`,
+    'Response:',
+    getResponseDetailsText(result),
+  ].join('\n');
 }
 
 function countTextLines(value: string): number {
@@ -1889,6 +1907,46 @@ function toSafeImportedRow(value: unknown): ImportedRow | undefined {
   };
 }
 
+function toSafeBatchRequestEntry(value: unknown): BatchRequestEntry | undefined {
+  if (!isRecord(value) || !isRecord(value.fields) || typeof value.endpoint !== 'string') {
+    return undefined;
+  }
+
+  return {
+    rowNumber: typeof value.rowNumber === 'number' ? value.rowNumber : 1,
+    fields: Object.fromEntries(Object.entries(value.fields).map(([key, entryValue]) => [key, String(entryValue ?? '')])),
+    endpoint: value.endpoint,
+    ok: typeof value.ok === 'boolean' ? value.ok : false,
+    status: typeof value.status === 'number' ? value.status : undefined,
+    statusText: typeof value.statusText === 'string' ? value.statusText : undefined,
+    errorDetail: typeof value.errorDetail === 'string' || value.errorDetail === null ? value.errorDetail : undefined,
+    durationMs: typeof value.durationMs === 'number' ? value.durationMs : undefined,
+    responseBody: value.responseBody,
+    responseHeaders: isRecord(value.responseHeaders)
+      ? Object.fromEntries(Object.entries(value.responseHeaders).map(([key, entryValue]) => [key, String(entryValue ?? '')]))
+      : undefined,
+  };
+}
+
+function toSafeBatchSummary(value: unknown): BatchHistorySummary | undefined {
+  if (!isRecord(value) || !Array.isArray(value.endpoints) || !Array.isArray(value.requests)) {
+    return undefined;
+  }
+
+  return {
+    totalRequests: typeof value.totalRequests === 'number' ? value.totalRequests : 0,
+    successCount: typeof value.successCount === 'number' ? value.successCount : 0,
+    errorCount: typeof value.errorCount === 'number' ? value.errorCount : 0,
+    endpoints: value.endpoints.map((endpoint) => String(endpoint ?? '')),
+    sourceFileName: typeof value.sourceFileName === 'string' ? value.sourceFileName : undefined,
+    sourceColumns: Array.isArray(value.sourceColumns) ? value.sourceColumns.map((column) => String(column ?? '')) : undefined,
+    sourceHasHeaderRow: typeof value.sourceHasHeaderRow === 'boolean' ? value.sourceHasHeaderRow : false,
+    requests: value.requests.map(toSafeBatchRequestEntry).filter((request): request is BatchRequestEntry => request !== undefined),
+    requestsComplete: typeof value.requestsComplete === 'boolean' ? value.requestsComplete : false,
+    truncated: typeof value.truncated === 'boolean' ? value.truncated : undefined,
+  };
+}
+
 function loadStoredHistory(): RequestHistoryEntry[] {
   try {
     const raw = window.localStorage.getItem(REQUEST_HISTORY_STORAGE_KEY);
@@ -1932,6 +1990,10 @@ function loadStoredHistory(): RequestHistoryEntry[] {
           durationMs: typeof entry.durationMs === 'number' ? entry.durationMs : undefined,
           finalUrl: typeof entry.finalUrl === 'string' ? entry.finalUrl : undefined,
           errorDetail: typeof entry.errorDetail === 'string' || entry.errorDetail === null ? entry.errorDetail : undefined,
+          scriptOutput: entry.scriptOutput,
+          scriptCommandId: typeof entry.scriptCommandId === 'string' ? entry.scriptCommandId : undefined,
+          scriptCommandLabel: typeof entry.scriptCommandLabel === 'string' ? entry.scriptCommandLabel : undefined,
+          batchSummary: toSafeBatchSummary(entry.batchSummary),
         } satisfies RequestHistoryEntry];
       })
       .slice(0, MAX_REQUEST_HISTORY_ENTRIES);
@@ -2364,8 +2426,8 @@ function getNextSecretNameSuggestion(available: string[]): string {
   return '';
 }
 
-function triggerJsonDownload(content: string, filename: string): void {
-  const blob = new Blob([content], { type: 'application/json' });
+function triggerTextDownload(content: string, filename: string, mimeType: string): void {
+  const blob = new Blob([content], { type: mimeType });
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement('a');
 
@@ -2379,6 +2441,36 @@ function triggerJsonDownload(content: string, filename: string): void {
   window.setTimeout(() => {
     URL.revokeObjectURL(objectUrl);
   }, 1200);
+}
+
+function triggerJsonDownload(content: string, filename: string): void {
+  triggerTextDownload(content, filename, 'application/json');
+}
+
+function escapeCsvCell(value: string): string {
+  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+function buildCsvFromRows(columns: string[], rows: Array<Record<string, string>>, hasHeaderRow: boolean): string {
+  const lines = rows.map((row) => columns.map((column) => escapeCsvCell(row[column] ?? '')).join(','));
+  if (!hasHeaderRow) {
+    return lines.join('\r\n');
+  }
+
+  const header = columns.map(escapeCsvCell).join(',');
+  return [header, ...lines].join('\r\n');
+}
+
+// Reprocessable file: only the original columns, matching the imported file structure exactly
+// (no diagnostic columns and no header row unless the source file had one).
+function buildFailedRowsCsv(baseColumns: string[], hasHeaderRow: boolean, failedRequests: BatchRequestEntry[]): string {
+  const sortedRequests = [...failedRequests].sort((left, right) => left.rowNumber - right.rowNumber);
+  return buildCsvFromRows(baseColumns, sortedRequests.map((request) => request.fields), hasHeaderRow);
+}
+
+function buildSourceFileCsv(baseColumns: string[], hasHeaderRow: boolean, requests: BatchRequestEntry[]): string {
+  const sortedRequests = [...requests].sort((left, right) => left.rowNumber - right.rowNumber);
+  return buildCsvFromRows(baseColumns, sortedRequests.map((request) => request.fields), hasHeaderRow);
 }
 
 function sortFavoriteRequestEntries(entries: FavoriteRequestEntry[]): FavoriteRequestEntry[] {
@@ -2544,6 +2636,14 @@ function App() {
       return 1;
     }
   });
+  const [historyScriptCacheHours, setHistoryScriptCacheHours] = useState(() => {
+    try {
+      const stored = Number(window.localStorage.getItem(HISTORY_SCRIPT_CACHE_HOURS_PREF_STORAGE_KEY));
+      return Number.isInteger(stored) && stored > 0 ? Math.min(stored, 8760) : DEFAULT_HISTORY_SCRIPT_CACHE_HOURS;
+    } catch {
+      return DEFAULT_HISTORY_SCRIPT_CACHE_HOURS;
+    }
+  });
   const [showImportPanel, setShowImportPanel] = useState(false);
   const [showPreviewPanel, setShowPreviewPanel] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -2555,6 +2655,8 @@ function App() {
   const [isCommandEndpointFocused, setIsCommandEndpointFocused] = useState(false);
   const [hideBaseEndpointMatchesUntilEdit, setHideBaseEndpointMatchesUntilEdit] = useState(false);
   const [hideCommandMatchesUntilEdit, setHideCommandMatchesUntilEdit] = useState(false);
+  const [activeBaseEndpointMatchIndex, setActiveBaseEndpointMatchIndex] = useState(-1);
+  const [activeCommandMatchIndex, setActiveCommandMatchIndex] = useState(-1);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [showFavoriteCommandsListInComposer, setShowFavoriteCommandsListInComposer] = useState(() => {
     try {
@@ -2604,6 +2706,8 @@ function App() {
   });
   const [historySearch, setHistorySearch] = useState('');
   const [historyMethodFilter, setHistoryMethodFilter] = useState<'ALL' | HttpMethod>('ALL');
+  const [historyBatchSearchByEntryId, setHistoryBatchSearchByEntryId] = useState<Record<string, string>>({});
+  const [historyBatchSelectedRowByEntryId, setHistoryBatchSelectedRowByEntryId] = useState<Record<string, number>>({});
   const [favoritesManagementSearch, setFavoritesManagementSearch] = useState('');
   const [favoritesManagementCommandMethodFilter, setFavoritesManagementCommandMethodFilter] = useState<'ALL' | HttpMethod>('ALL');
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
@@ -3073,6 +3177,41 @@ function App() {
       // Ignore persistence failures (private mode / restricted storage).
     }
   }, [autoExpandResults, autoExpandResultsLimit]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(HISTORY_SCRIPT_CACHE_HOURS_PREF_STORAGE_KEY, String(historyScriptCacheHours));
+    } catch {
+      // Ignore persistence failures (private mode / restricted storage).
+    }
+
+    const purgeExpiredScriptCache = () => {
+      const expiryMs = historyScriptCacheHours * 3600000;
+      setRequestHistory((current) => {
+        let changed = false;
+        const next = current.map((entry) => {
+          if (entry.scriptOutput === undefined) {
+            return entry;
+          }
+
+          const sentAtMs = Date.parse(entry.sentAt);
+          if (Number.isNaN(sentAtMs) || Date.now() - sentAtMs <= expiryMs) {
+            return entry;
+          }
+
+          changed = true;
+          const { scriptOutput: _output, scriptCommandId: _id, scriptCommandLabel: _label, ...rest } = entry;
+          return rest;
+        });
+
+        return changed ? next : current;
+      });
+    };
+
+    purgeExpiredScriptCache();
+    const timerId = window.setInterval(purgeExpiredScriptCache, 300000);
+    return () => window.clearInterval(timerId);
+  }, [historyScriptCacheHours]);
 
   useEffect(() => {
     if (!autoExpandResults || results.length === 0 || results.length > autoExpandResultsLimit) {
@@ -3554,12 +3693,14 @@ function App() {
   function updateBaseEndpoint(value: string) {
     setBaseEndpoint(value);
     setHideBaseEndpointMatchesUntilEdit(false);
+    setActiveBaseEndpointMatchIndex(-1);
     setComposerDraftRawBody((current) => current ?? '');
   }
 
   function updateCommandEndpoint(value: string) {
     setCommandEndpoint(value);
     setHideCommandMatchesUntilEdit(false);
+    setActiveCommandMatchIndex(-1);
     setSelectedFavoriteCommandIdsOrdered([]);
     setComposerDraftRawBody((current) => current ?? '');
   }
@@ -3567,6 +3708,7 @@ function App() {
   function applyFavoriteBaseEndpoint(value: string) {
     setBaseEndpoint(value);
     setHideBaseEndpointMatchesUntilEdit(true);
+    setActiveBaseEndpointMatchIndex(-1);
     setComposerDraftRawBody((current) => current ?? '');
     setStatusMessage(`Endpoint base cargado en el constructor: ${value}`);
   }
@@ -3581,7 +3723,56 @@ function App() {
       setComposerDraftRawBody(raw);
     }
     setHideCommandMatchesUntilEdit(true);
+    setActiveCommandMatchIndex(-1);
     setStatusMessage(`Comando cargado en el constructor: ${entry.command}`);
+  }
+
+  function handleBaseEndpointKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (!isBaseEndpointFocused || hideBaseEndpointMatchesUntilEdit || baseEndpointMatches.length === 0) {
+      return;
+    }
+
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      setActiveBaseEndpointMatchIndex((current) => {
+        const count = baseEndpointMatches.length;
+        const next = event.shiftKey ? current - 1 : current + 1;
+        return ((next % count) + count) % count;
+      });
+      return;
+    }
+
+    if (event.key === 'Enter' && activeBaseEndpointMatchIndex >= 0) {
+      event.preventDefault();
+      const selected = baseEndpointMatches[activeBaseEndpointMatchIndex];
+      if (selected) {
+        applyFavoriteBaseEndpoint(selected.baseUrl);
+      }
+    }
+  }
+
+  function handleCommandEndpointKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (!isCommandEndpointFocused || hideCommandMatchesUntilEdit || commandMatches.length === 0) {
+      return;
+    }
+
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      setActiveCommandMatchIndex((current) => {
+        const count = commandMatches.length;
+        const next = event.shiftKey ? current - 1 : current + 1;
+        return ((next % count) + count) % count;
+      });
+      return;
+    }
+
+    if (event.key === 'Enter' && activeCommandMatchIndex >= 0) {
+      event.preventDefault();
+      const selected = commandMatches[activeCommandMatchIndex];
+      if (selected) {
+        applyFavoriteCommand(selected);
+      }
+    }
   }
 
   function resolveRawBodyForPostTuple(tupleId?: string): string {
@@ -4261,13 +4452,9 @@ function App() {
       return;
     }
 
-    const payload = results.map((result, index) => [
-      `#${index + 1}`,
-      `method=${result.method}`,
-      `status=${result.status} ${result.statusText}`,
-      `durationMs=${result.durationMs}`,
-      getResponseDetailsText(result),
-    ].join('\n')).join('\n\n');
+    const payload = results
+      .map((result, index) => buildResultClipboardText(result, `#${index + 1}`))
+      .join('\n\n');
 
     const copied = await copyTextToClipboard(payload);
     if (copied) {
@@ -4504,11 +4691,11 @@ function App() {
             <span className="muted-small">Coincidencias endpoint base</span>
           </div>
           <div className={`endpoint-favorites-scroll${baseEndpointMatches.length >= 3 ? ' endpoint-favorites-scroll-min' : ''}`}>
-            {baseEndpointMatches.map((entry) => (
+            {baseEndpointMatches.map((entry, index) => (
               <button
                 key={`base-endpoint-match-${entry.id}`}
                 type="button"
-                className="favorite-match-button favorite-summary-surface"
+                className={`favorite-match-button favorite-summary-surface${index === activeBaseEndpointMatchIndex ? ' favorite-match-button-active' : ''}`}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => applyFavoriteBaseEndpoint(entry.baseUrl)}
                 title={entry.baseUrl}
@@ -4542,11 +4729,11 @@ function App() {
         <div className="endpoint-favorites-block">
           <span className="muted-small">Coincidencias comando</span>
           <div className={`endpoint-favorites-scroll${commandMatches.length >= 3 ? ' endpoint-favorites-scroll-min' : ''}`}>
-            {commandMatches.map((entry) => (
+            {commandMatches.map((entry, index) => (
               <button
                 key={`command-match-${entry.id}`}
                 type="button"
-                className="favorite-match-button favorite-summary-surface"
+                className={`favorite-match-button favorite-summary-surface${index === activeCommandMatchIndex ? ' favorite-match-button-active' : ''}`}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => applyFavoriteCommand(entry)}
                 title={entry.command}
@@ -5766,7 +5953,44 @@ function App() {
     setRequestHistory((current) => [entry, ...current].slice(0, MAX_REQUEST_HISTORY_ENTRIES));
   }
 
+  function captureScriptVisualization(row: ImportedRow | undefined, requestPreview: RequestPreview, response: DispatchResult | Omit<DispatchResult, 'rowNumber' | 'row' | 'requestPreview'>) {
+    const resultLike = {
+      ...response,
+      rowNumber: row?.rowNumber ?? 1,
+      row: row ?? { rowNumber: 1, cells: [], fields: {} },
+      requestPreview,
+    } as DispatchResult;
+
+    const associatedCommand = resolveFavoriteCommandForResult(resultLike);
+    const script = associatedCommand?.postResponseScript?.trim();
+    if (!associatedCommand || !script) {
+      return null;
+    }
+
+    const execution = executePostResponseScript(script, buildPostResponseContext(resultLike));
+    if (execution.error || isEmptyScriptOutput(execution.output)) {
+      return null;
+    }
+
+    // Keep history within localStorage limits; skip oversized visualizations.
+    try {
+      if ((JSON.stringify(execution.output)?.length ?? 0) > MAX_HISTORY_SCRIPT_OUTPUT_SIZE) {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+
+    return {
+      scriptOutput: execution.output,
+      scriptCommandId: associatedCommand.id,
+      scriptCommandLabel: associatedCommand.command,
+    };
+  }
+
   function registerHistoryEntry(row: ImportedRow | undefined, requestPreview: RequestPreview, response: DispatchResult | Omit<DispatchResult, 'rowNumber' | 'row' | 'requestPreview'>) {
+    const scriptVisualization = captureScriptVisualization(row, requestPreview, response);
+
     appendHistoryEntry({
       id: createHistoryId(),
       name: deriveRequestName(requestPreview.method, requestPreview.url),
@@ -5785,6 +6009,94 @@ function App() {
       durationMs: response.durationMs,
       finalUrl: response.finalUrl,
       errorDetail: response.errorDetail,
+      ...(scriptVisualization ?? {}),
+    });
+  }
+
+  function registerBatchHistoryEntry(
+    batchMethod: HttpMethod,
+    endpoints: string[],
+    entries: DispatchResult[],
+    source: { fileName?: string; sourceColumns?: string[]; hasHeaderRow?: boolean },
+  ) {
+    if (entries.length === 0) {
+      return;
+    }
+
+    const successCount = entries.filter((entry) => entry.ok).length;
+    const errorCount = entries.length - successCount;
+    const allRequests: BatchRequestEntry[] = entries.map((entry) => ({
+      rowNumber: entry.row.rowNumber,
+      fields: entry.row.fields,
+      endpoint: entry.requestPreview.url || entry.finalUrl,
+      ok: entry.ok,
+      status: entry.status,
+      statusText: entry.statusText,
+      errorDetail: entry.errorDetail,
+      durationMs: entry.durationMs,
+      responseBody: entry.responseBody,
+      responseHeaders: entry.responseHeaders,
+    }));
+
+    const uniqueEndpoints = Array.from(new Set(endpoints));
+    const primaryEndpoint = uniqueEndpoints[0] ?? '';
+    const totalDurationMs = entries.reduce((sum, entry) => sum + (entry.durationMs ?? 0), 0);
+
+    // Keep history within localStorage limits: prefer storing every processed row so both the
+    // source file and the full result set stay available; fall back to failed-only, then to none.
+    let requests = allRequests;
+    let requestsComplete = true;
+    let truncated = false;
+
+    try {
+      if ((JSON.stringify(allRequests)?.length ?? 0) > MAX_BATCH_SUMMARY_SIZE) {
+        const failedOnly = allRequests.filter((request) => !request.ok);
+        const failedOnlySize = (() => {
+          try {
+            return JSON.stringify(failedOnly)?.length ?? 0;
+          } catch {
+            return MAX_BATCH_SUMMARY_SIZE + 1;
+          }
+        })();
+
+        requests = failedOnlySize > MAX_BATCH_SUMMARY_SIZE ? [] : failedOnly;
+        requestsComplete = false;
+        truncated = true;
+      }
+    } catch {
+      requests = [];
+      requestsComplete = false;
+      truncated = true;
+    }
+
+    const batchSummary: BatchHistorySummary = {
+      totalRequests: entries.length,
+      successCount,
+      errorCount,
+      endpoints: uniqueEndpoints,
+      sourceFileName: source.fileName || undefined,
+      sourceColumns: source.sourceColumns && source.sourceColumns.length > 0 ? source.sourceColumns : undefined,
+      sourceHasHeaderRow: source.hasHeaderRow ?? false,
+      requests,
+      requestsComplete,
+      truncated,
+    };
+
+    appendHistoryEntry({
+      id: createHistoryId(),
+      name: `${batchMethod} lote: ${entries.length} solicitud(es) (${uniqueEndpoints.length} endpoint(s))`,
+      origin: 'runtime',
+      sentAt: new Date().toISOString(),
+      method: batchMethod,
+      url: primaryEndpoint,
+      headers: {},
+      query: {},
+      bodyMode: 'RAW',
+      ok: errorCount === 0,
+      durationMs: totalDurationMs,
+      finalUrl: primaryEndpoint,
+      errorDetail: errorCount > 0 ? `${errorCount} solicitud(es) con error de ${entries.length}.` : null,
+      batchSummary,
     });
   }
 
@@ -5876,6 +6188,234 @@ function App() {
   function clearHistory() {
     setRequestHistory([]);
     setStatusMessage('Historial de solicitudes vaciado.');
+  }
+
+  function downloadBatchFailedRowsCsv(entry: RequestHistoryEntry) {
+    const summary = entry.batchSummary;
+    const failedRequests = summary?.requests.filter((request) => !request.ok) ?? [];
+    if (!summary || failedRequests.length === 0) {
+      setStatusMessage(t('No hay filas con error para descargar.'));
+      return;
+    }
+
+    const baseColumns = summary.sourceColumns && summary.sourceColumns.length > 0
+      ? summary.sourceColumns
+      : Array.from(new Set(failedRequests.flatMap((request) => Object.keys(request.fields))));
+
+    const csvContent = buildFailedRowsCsv(baseColumns, summary.sourceHasHeaderRow ?? false, failedRequests);
+    const baseName = (summary.sourceFileName || 'lote').replace(/\.[^./\\]+$/, '');
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+
+    triggerTextDownload(csvContent, `${baseName}-errores-${stamp}.csv`, 'text/csv');
+    setStatusMessage(`${failedRequests.length} fila(s) con error exportadas a CSV.`);
+  }
+
+  function downloadBatchSourceFile(entry: RequestHistoryEntry) {
+    const summary = entry.batchSummary;
+    if (!summary || !summary.requestsComplete || summary.requests.length === 0) {
+      setStatusMessage(t('El archivo origen ya no está disponible para descargar.'));
+      return;
+    }
+
+    const baseColumns = summary.sourceColumns && summary.sourceColumns.length > 0
+      ? summary.sourceColumns
+      : Array.from(new Set(summary.requests.flatMap((request) => Object.keys(request.fields))));
+
+    const csvContent = buildSourceFileCsv(baseColumns, summary.sourceHasHeaderRow ?? false, summary.requests);
+    const baseName = (summary.sourceFileName || 'lote').replace(/\.[^./\\]+$/, '');
+
+    triggerTextDownload(csvContent, `${baseName}-historial.csv`, 'text/csv');
+    setStatusMessage(t('Archivo origen exportado a CSV.'));
+  }
+
+  function renderBatchRequestsExplorer(entry: RequestHistoryEntry) {
+    const summary = entry.batchSummary;
+    if (!summary || summary.requests.length === 0) {
+      return (
+        <p className="muted-small">{t('El detalle de filas procesadas no está disponible para este lote.')}</p>
+      );
+    }
+
+    const searchValue = historyBatchSearchByEntryId[entry.id] ?? '';
+    const normalizedSearch = searchValue.trim().toLowerCase();
+    const columns = summary.sourceColumns && summary.sourceColumns.length > 0
+      ? summary.sourceColumns
+      : Array.from(new Set(summary.requests.flatMap((request) => Object.keys(request.fields))));
+
+    const filteredRequests = normalizedSearch
+      ? summary.requests.filter((request) => {
+          const haystack = [
+            ...columns.map((column) => request.fields[column] ?? ''),
+            request.endpoint,
+            request.status !== undefined ? String(request.status) : '',
+            request.statusText ?? '',
+            request.errorDetail ?? '',
+            request.ok ? 'OK' : 'ERROR',
+          ].join(' ').toLowerCase();
+          return haystack.includes(normalizedSearch);
+        })
+      : summary.requests;
+
+    const selectedRowNumber = historyBatchSelectedRowByEntryId[entry.id];
+    const selectedRequest = selectedRowNumber !== undefined
+      ? summary.requests.find((request) => request.rowNumber === selectedRowNumber)
+      : undefined;
+    const selectedResult = selectedRequest ? {
+      method: entry.method,
+      status: selectedRequest.status ?? 0,
+      statusText: selectedRequest.statusText ?? '',
+      durationMs: selectedRequest.durationMs ?? 0,
+      finalUrl: selectedRequest.endpoint,
+      responseBody: selectedRequest.responseBody,
+      responseHeaders: selectedRequest.responseHeaders ?? {},
+      errorDetail: selectedRequest.errorDetail ?? null,
+      ok: selectedRequest.ok,
+      rowNumber: selectedRequest.rowNumber,
+      row: {
+        rowNumber: selectedRequest.rowNumber,
+        cells: Object.values(selectedRequest.fields),
+        fields: selectedRequest.fields,
+      },
+      requestPreview: {
+        method: entry.method,
+        url: selectedRequest.endpoint,
+        headers: {},
+        query: {},
+        bodyMode: 'RAW' as const,
+      },
+    } satisfies DispatchResult : null;
+    const associatedCommand = selectedResult ? resolveFavoriteCommandForResult(selectedResult) : null;
+    const postResponseExecution = selectedResult && associatedCommand?.postResponseScript?.trim()
+      ? executePostResponseScript(associatedCommand.postResponseScript, buildPostResponseContext(selectedResult))
+      : null;
+
+    return (
+      <div className="history-batch-explorer">
+        <div className="history-batch-search-row">
+          <input
+            type="text"
+            className="history-batch-search-input"
+            placeholder={t('Buscar en los resultados del lote...')}
+            value={searchValue}
+            onChange={(event) => setHistoryBatchSearchByEntryId((current) => ({ ...current, [entry.id]: event.target.value }))}
+          />
+          <span className="muted-small">{`${filteredRequests.length} / ${summary.requests.length}`}</span>
+        </div>
+        {!summary.requestsComplete ? (
+          <p className="muted-small">{t('Solo se conservan las filas con error porque el lote completo superaba el tamaño máximo de historial.')}</p>
+        ) : null}
+        <div className="post-response-table-wrap">
+          <table className="post-response-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                {columns.map((column) => (
+                  <th key={`batch-col-${entry.id}-${column}`}>{column}</th>
+                ))}
+                <th>Endpoint</th>
+                <th>{t('Estado')}</th>
+                <th>{t('Detalle')}</th>
+                <th>Response</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredRequests.length === 0 ? (
+                <tr>
+                  <td colSpan={columns.length + 5}>{t('No hay filas que coincidan con la búsqueda.')}</td>
+                </tr>
+              ) : (
+                filteredRequests.map((request, index) => (
+                  <tr
+                    key={`batch-row-${entry.id}-${request.rowNumber}-${index}`}
+                    className={request.ok ? undefined : 'history-batch-row-error'}
+                    data-history-batch-row-key={`${entry.id}-${request.rowNumber}`}
+                  >
+                    <td>{request.rowNumber}</td>
+                    {columns.map((column) => (
+                      <td key={`batch-cell-${entry.id}-${request.rowNumber}-${column}`}>{request.fields[column] ?? ''}</td>
+                    ))}
+                    <td title={request.endpoint}>{request.endpoint}</td>
+                    <td>{request.ok ? 'OK' : (request.status ? `${request.status} ${request.statusText ?? ''}` : t('Error'))}</td>
+                    <td>{request.errorDetail ?? ''}</td>
+                    <td>
+                      {request.responseBody !== undefined ? (
+                        <button
+                          type="button"
+                          className="ghost-button history-batch-view-response-button"
+                          onClick={() => setHistoryBatchSelectedRowByEntryId((current) => ({
+                            ...current,
+                            [entry.id]: current[entry.id] === request.rowNumber ? -1 : request.rowNumber,
+                          }))}
+                        >
+                          {selectedRowNumber === request.rowNumber ? t('Ocultar') : t('Ver respuesta')}
+                        </button>
+                      ) : (
+                        <span className="muted-small">{t('No disponible')}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        {selectedRequest && selectedResult ? (
+          <details
+            className="history-batch-response-panel"
+            open
+            onToggle={(event) => {
+              if (!event.currentTarget.open) {
+                setHistoryBatchSelectedRowByEntryId((current) => ({ ...current, [entry.id]: -1 }));
+                requestAnimationFrame(() => {
+                  document
+                    .querySelector(`[data-history-batch-row-key="${entry.id}-${selectedRequest.rowNumber}"]`)
+                    ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                });
+              }
+            }}
+            onContextMenu={openResultDetailsContextMenu}
+          >
+            <summary className="history-batch-response-header">
+              <strong>{`${t('Respuesta')} - ${t('Fila')} ${selectedRequest.rowNumber}`}</strong>
+            </summary>
+            {associatedCommand ? (
+              <div className="post-response-script-panel">
+                <div className="post-response-script-header">
+                  <strong>Post-respuesta ({associatedCommand.command})</strong>
+                </div>
+                {postResponseExecution ? (
+                  postResponseExecution.error ? (
+                    <p className="result-error-hint">Script error: {postResponseExecution.error}</p>
+                  ) : (
+                    renderPostResponseOutput(postResponseExecution.output, associatedCommand.id)
+                  )
+                ) : (
+                  <p className="muted-small">Este comando no tiene script post-respuesta.</p>
+                )}
+              </div>
+            ) : null}
+            <div className="result-detail-grid">
+              <div>
+                <h3>Endpoint</h3>
+                <pre>{selectedRequest.endpoint}</pre>
+              </div>
+              <div>
+                <h3>Response</h3>
+                <pre>
+                  {formatJson({
+                    status: selectedRequest.status,
+                    statusText: selectedRequest.statusText,
+                    headers: selectedRequest.responseHeaders ?? {},
+                    body: selectedRequest.responseBody,
+                    errorDetail: selectedRequest.errorDetail ?? null,
+                  })}
+                </pre>
+              </div>
+            </div>
+          </details>
+        ) : null}
+      </div>
+    );
   }
 
   function exportHistory() {
@@ -6890,7 +7430,7 @@ function App() {
       });
   }
 
-  async function dispatchRows(targetRows: ImportedRow[], endpointOverrides?: string[], endpointTupleIds?: string[]) {
+  async function dispatchRows(targetRows: ImportedRow[], endpointOverrides?: string[], endpointTupleIds?: string[], batchMode = false) {
     const rawEndpoints = endpointOverrides ?? [composedEndpoint || endpoint];
     const normalizedTargets = rawEndpoints
       .map((value, index) => ({
@@ -6964,6 +7504,7 @@ function App() {
               errorDetail: templateError,
               rowNumber: index + 1,
               row,
+              receivedAt: new Date().toISOString(),
               requestPreview: {
                 method,
                 url: targetEndpoint,
@@ -6989,9 +7530,12 @@ function App() {
             rowNumber: index + 1,
             row,
             requestPreview,
+            receivedAt: new Date().toISOString(),
           });
           setResults([...nextResults]);
-          registerHistoryEntry(row, requestPreview, response);
+          if (!batchMode) {
+            registerHistoryEntry(row, requestPreview, response);
+          }
 
           if (!response.ok) {
             collectedErrors.push(
@@ -7028,13 +7572,22 @@ function App() {
       if (uniqueErrors.length > 0) {
         scrollToResultsPanel();
       }
+
+      if (batchMode) {
+        registerBatchHistoryEntry(
+          method,
+          normalizedTargets.map((target) => target.endpoint),
+          nextResults,
+          { fileName, sourceColumns: csvColumns, hasHeaderRow: firstRowAsHeaders },
+        );
+      }
     } finally {
       setIsSending(false);
       stopRequestedRef.current = false;
     }
   }
 
-  async function dispatchGetTuples(targetEndpoints: string[], targetTupleIds?: string[]) {
+  async function dispatchGetTuples(targetEndpoints: string[], targetTupleIds?: string[], batchMode = false) {
     const postais = window.postais;
     if (!postais) {
       setStatusMessage('La API nativa no esta disponible. Ejecuta la app dentro de Electron.');
@@ -7095,6 +7648,7 @@ function App() {
             errorDetail: templateError,
             rowNumber: index + 1,
             row: tupleRow,
+            receivedAt: new Date().toISOString(),
             requestPreview: {
               method: 'GET',
               url: endpointTuple,
@@ -7119,9 +7673,12 @@ function App() {
           rowNumber: index + 1,
           row: tupleRow,
           requestPreview,
+          receivedAt: new Date().toISOString(),
         });
         setResults([...nextResults]);
-        registerHistoryEntry(tupleRow, requestPreview, response);
+        if (!batchMode) {
+          registerHistoryEntry(tupleRow, requestPreview, response);
+        }
 
         if (!response.ok) {
           collectedErrors.push(`GET ${index + 1}: ${response.errorDetail ?? `${response.status} ${response.statusText}`}`);
@@ -7150,6 +7707,18 @@ function App() {
       setDispatchErrors(uniqueErrors);
       if (uniqueErrors.length > 0) {
         scrollToResultsPanel();
+      }
+
+      if (batchMode && nextResults.length === 1) {
+        const [result] = nextResults;
+        registerHistoryEntry(result.row, result.requestPreview, result);
+      } else if (batchMode) {
+        registerBatchHistoryEntry(
+          'GET',
+          normalizedPairs.map((pair) => pair.endpoint),
+          nextResults,
+          { sourceColumns: ['endpoint'] },
+        );
       }
     } finally {
       setIsSending(false);
@@ -7342,6 +7911,7 @@ function App() {
         rowNumber: 1,
         row,
         requestPreview: preview,
+        receivedAt: new Date().toISOString(),
       }]);
 
       registerHistoryEntry(row, preview, response);
@@ -7417,7 +7987,7 @@ function App() {
         requiredConfirmation: method !== 'GET' && method !== 'POST' ? 'CONFIRMAR' : undefined,
       },
       () => {
-        dispatchRows(rowsToSend, method !== 'GET' ? postEndpointTuples : undefined, method !== 'GET' ? postEndpointTupleIds : undefined);
+        dispatchRows(rowsToSend, method !== 'GET' ? postEndpointTuples : undefined, method !== 'GET' ? postEndpointTupleIds : undefined, true);
       },
     );
   }
@@ -7448,7 +8018,7 @@ function App() {
         sessionKey: 'send-get-batch',
       },
       () => {
-        dispatchGetTuples(getEndpointTuples, getEndpointTupleIds);
+        dispatchGetTuples(getEndpointTuples, getEndpointTupleIds, true);
       },
     );
   }
@@ -7931,8 +8501,12 @@ function App() {
                       type="text"
                       value={baseEndpoint}
                       onFocus={() => setIsBaseEndpointFocused(true)}
-                      onBlur={() => setIsBaseEndpointFocused(false)}
+                      onBlur={() => {
+                        setIsBaseEndpointFocused(false);
+                        setActiveBaseEndpointMatchIndex(-1);
+                      }}
                       onChange={(event) => updateBaseEndpoint(event.target.value)}
+                      onKeyDown={handleBaseEndpointKeyDown}
                       placeholder="https://host/servicio-base"
                     />
                     <button
@@ -7954,8 +8528,12 @@ function App() {
                       type="text"
                       value={commandEndpoint}
                       onFocus={() => setIsCommandEndpointFocused(true)}
-                      onBlur={() => setIsCommandEndpointFocused(false)}
+                      onBlur={() => {
+                        setIsCommandEndpointFocused(false);
+                        setActiveCommandMatchIndex(-1);
+                      }}
                       onChange={(event) => updateCommandEndpoint(event.target.value)}
+                      onKeyDown={handleCommandEndpointKeyDown}
                       placeholder="/v2/example"
                     />
                     <button
@@ -8599,7 +9177,7 @@ function App() {
                                     type="button"
                                     className="ghost-button"
                                     onClick={() => {
-                                      void copyTextToClipboard(responseText).then((copied) => {
+                                      void copyTextToClipboard(buildResultClipboardText(result)).then((copied) => {
                                         if (copied) {
                                           setStatusMessage('Respuesta copiada al portapapeles.');
                                         } else {
@@ -8738,6 +9316,9 @@ function App() {
                           <span className="favorite-description-label" title={entry.name}>{entry.name}</span>
                           <div className="chip-row favorite-summary-badges">
                             <span className="chip">{entry.method}</span>
+                            {entry.batchSummary ? (
+                              <span className="chip">{t('Lote')}</span>
+                            ) : null}
                             <span className="chip">{entry.origin === 'collection-import' ? 'Importado' : 'Enviado'}</span>
                           </div>
                         </div>
@@ -8750,10 +9331,17 @@ function App() {
                         <p className="muted-small">{formatHistoryDate(entry.sentAt)}</p>
 
                         <div className="action-row">
-                          <button type="button" className="secondary-button" onClick={() => applyHistoryEntry(entry)}>
-                            Cargar en inicio
-                          </button>
-                          {showFavoriteRequestsSection ? (
+                          {!entry.batchSummary ? (
+                            <button type="button" className="secondary-button" onClick={() => applyHistoryEntry(entry)}>
+                              Cargar en inicio
+                            </button>
+                          ) : null}
+                          {entry.batchSummary && entry.batchSummary.errorCount > 0 ? (
+                            <button type="button" className="secondary-button" onClick={() => downloadBatchFailedRowsCsv(entry)}>
+                              {t('Descargar CSV de errores')}
+                            </button>
+                          ) : null}
+                          {showFavoriteRequestsSection && !entry.batchSummary ? (
                             <button type="button" className="ghost-button" onClick={() => saveHistoryEntryAsFavorite(entry)}>
                               Guardar favorito
                             </button>
@@ -8764,53 +9352,108 @@ function App() {
                         </div>
                       </div>
 
-                      <div className="history-meta-grid">
-                        <div className="history-meta-card">
-                          <span>Estado</span>
-                          <strong>
-                            {entry.status !== undefined
-                              ? `${entry.status}${entry.statusText ? ` ${entry.statusText}` : ''}`
-                              : entry.origin === 'collection-import'
-                                ? 'Importado'
-                                : 'Sin respuesta'}
-                          </strong>
-                        </div>
-                        <div className="history-meta-card">
-                          <span>Tiempo</span>
-                          <strong>{entry.durationMs !== undefined ? `${entry.durationMs} ms` : '-'}</strong>
-                        </div>
-                        <div className="history-meta-card history-meta-card-wide">
-                          <span>URL</span>
-                          <strong>{entry.finalUrl ?? entry.url}</strong>
-                        </div>
-                      </div>
+                      {entry.batchSummary ? (
+                        <>
+                          <div className="history-meta-grid">
+                            <div className="history-meta-card">
+                              <span>{t('Total')}</span>
+                              <strong>{entry.batchSummary.totalRequests}</strong>
+                            </div>
+                            <div className="history-meta-card">
+                              <span>{t('Aceptadas')}</span>
+                              <strong>{entry.batchSummary.successCount}</strong>
+                            </div>
+                            <div className="history-meta-card">
+                              <span>{t('Errores')}</span>
+                              <strong>{entry.batchSummary.errorCount}</strong>
+                            </div>
+                            <div className="history-meta-card history-meta-card-wide">
+                              <span>{t('Archivo origen')}</span>
+                              <strong>{entry.batchSummary.sourceFileName || t('Sin archivo cargado')}</strong>
+                              {entry.batchSummary.requestsComplete && entry.batchSummary.requests.length > 0 ? (
+                                <button type="button" className="ghost-button history-source-download-button" onClick={() => downloadBatchSourceFile(entry)}>
+                                  {t('Descargar archivo origen')}
+                                </button>
+                              ) : (
+                                <span className="muted-small">{t('Archivo origen no disponible para descarga.')}</span>
+                              )}
+                            </div>
+                          </div>
 
-                      <div className="result-detail-grid">
-                        <div>
-                          <h3>Request</h3>
-                          <pre>
-                            {formatJson({
-                              method: entry.method,
-                              url: entry.url,
-                              headers: entry.headers,
-                              query: entry.query,
-                              bodyMode: entry.bodyMode,
-                              body: entry.body,
-                            })}
-                          </pre>
-                        </div>
-                        <div>
-                          <h3>Contexto guardado</h3>
-                          <pre>
-                            {formatJson({
-                              origin: entry.origin,
-                              row: entry.row ?? null,
-                              ok: entry.ok ?? null,
-                              errorDetail: entry.errorDetail ?? null,
-                            })}
-                          </pre>
-                        </div>
-                      </div>
+                          <div className="result-detail-grid">
+                            <div>
+                              <h3>Endpoints</h3>
+                              <pre>{formatJson(entry.batchSummary.endpoints)}</pre>
+                            </div>
+                          </div>
+
+                          <details className="history-script-panel">
+                            <summary>{`${t('Resultados procesados')} (${entry.batchSummary.requests.length})`}</summary>
+                            {renderBatchRequestsExplorer(entry)}
+                          </details>
+                        </>
+                      ) : (
+                        <>
+                          <div className="history-meta-grid">
+                            <div className="history-meta-card">
+                              <span>Estado</span>
+                              <strong>
+                                {entry.status !== undefined
+                                  ? `${entry.status}${entry.statusText ? ` ${entry.statusText}` : ''}`
+                                  : entry.origin === 'collection-import'
+                                    ? 'Importado'
+                                    : 'Sin respuesta'}
+                              </strong>
+                            </div>
+                            <div className="history-meta-card">
+                              <span>Tiempo</span>
+                              <strong>{entry.durationMs !== undefined ? `${entry.durationMs} ms` : '-'}</strong>
+                            </div>
+                            <div className="history-meta-card history-meta-card-wide">
+                              <span>URL</span>
+                              <strong>{entry.finalUrl ?? entry.url}</strong>
+                            </div>
+                          </div>
+
+                          <div className="result-detail-grid">
+                            <div>
+                              <h3>Request</h3>
+                              <pre>
+                                {formatJson({
+                                  method: entry.method,
+                                  url: entry.url,
+                                  headers: entry.headers,
+                                  query: entry.query,
+                                  bodyMode: entry.bodyMode,
+                                  body: entry.body,
+                                })}
+                              </pre>
+                            </div>
+                            <div>
+                              <h3>Contexto guardado</h3>
+                              <pre>
+                                {formatJson({
+                                  origin: entry.origin,
+                                  row: entry.row ?? null,
+                                  ok: entry.ok ?? null,
+                                  errorDetail: entry.errorDetail ?? null,
+                                })}
+                              </pre>
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      {entry.scriptOutput !== undefined ? (
+                        <details className="history-script-panel">
+                          <summary>
+                            {appLanguage === 'en'
+                              ? `Saved script visualization${entry.scriptCommandLabel ? ` (${entry.scriptCommandLabel})` : ''}`
+                              : `${t('Visualización de respuesta')}${entry.scriptCommandLabel ? ` (${entry.scriptCommandLabel})` : ''}`}
+                          </summary>
+                          {renderPostResponseOutput(entry.scriptOutput, entry.scriptCommandId)}
+                        </details>
+                      ) : null}
                     </article>
                   ))}
                 </div>
@@ -10017,6 +10660,24 @@ function App() {
                   <small className="muted-small">{t('Si el número de resultados supera este límite, no se abrirá ninguno automáticamente.')}</small>
                 </label>
               ) : null}
+
+              <label className="field">
+                <span>{t('Horas de caché de resultados en el historial')}</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={8760}
+                  step={1}
+                  value={historyScriptCacheHours}
+                  onChange={(event) => {
+                    const parsed = Number(event.target.value);
+                    if (Number.isInteger(parsed) && parsed >= 1) {
+                      setHistoryScriptCacheHours(Math.min(parsed, 8760));
+                    }
+                  }}
+                />
+                <small className="muted-small">{t('Las visualizaciones guardadas en el historial se eliminan al superar este tiempo desde el lanzamiento.')}</small>
+              </label>
 
               <label className="field">
                 <span>Mostrar listado de comandos favoritos en constructor</span>

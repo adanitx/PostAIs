@@ -58,9 +58,36 @@ export interface DispatchResult extends PostResponsePayload {
   rowNumber: number;
   row: ImportedRow;
   requestPreview: RequestPreview;
+  receivedAt?: string;
 }
 
 export type HistoryEntryOrigin = 'runtime' | 'collection-import';
+
+export interface BatchRequestEntry {
+  rowNumber: number;
+  fields: Record<string, string>;
+  endpoint: string;
+  ok: boolean;
+  status?: number;
+  statusText?: string;
+  errorDetail?: string | null;
+  durationMs?: number;
+  responseBody?: unknown;
+  responseHeaders?: Record<string, string>;
+}
+
+export interface BatchHistorySummary {
+  totalRequests: number;
+  successCount: number;
+  errorCount: number;
+  endpoints: string[];
+  sourceFileName?: string;
+  sourceColumns?: string[];
+  sourceHasHeaderRow?: boolean;
+  requests: BatchRequestEntry[];
+  requestsComplete: boolean;
+  truncated?: boolean;
+}
 
 export interface RequestHistoryEntry {
   id: string;
@@ -80,6 +107,10 @@ export interface RequestHistoryEntry {
   durationMs?: number;
   finalUrl?: string;
   errorDetail?: string | null;
+  scriptOutput?: unknown;
+  scriptCommandId?: string;
+  scriptCommandLabel?: string;
+  batchSummary?: BatchHistorySummary;
 }
 
 export interface FavoriteEndpointEntry {
