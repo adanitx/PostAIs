@@ -2734,6 +2734,7 @@ function App() {
 
   const stopRequestedRef = useRef(false);
   const secretValueRef = useRef<HTMLInputElement | null>(null);
+  const fileImportInputRef = useRef<HTMLInputElement | null>(null);
   const sliderRef = useRef<HTMLDivElement | null>(null);
   const resultsPanelRef = useRef<HTMLElement | null>(null);
   const endpointTupleEditSnapshotRef = useRef<Record<string, string>>({});
@@ -3814,6 +3815,18 @@ function App() {
     const firstComposedEndpoint = endpointsToApply[0] ?? '';
     const firstSelectedCommand = selectedFavoriteCommandsOrdered[0];
     const defaultRawFromCommand = firstSelectedCommand?.method === 'POST' && method === 'POST' ? (firstSelectedCommand.defaultRawBody ?? '') : '';
+    const discardedImportedRows = mode === 'replace' && method === 'POST' && rows.length > 0;
+
+    if (discardedImportedRows) {
+      setRows([]);
+      setSelectedRowIndex(0);
+      setFileName('');
+      setImportErrors([]);
+      setResults([]);
+      setDispatchErrors([]);
+      setShowImportPanel(false);
+      setShowPreviewPanel(false);
+    }
 
     if (method === 'GET') {
       setGetEndpointTuples((current) => {
@@ -3916,7 +3929,7 @@ function App() {
         return next;
       });
       if (mode === 'replace') {
-        setStatusMessage(`${endpointsToApply.length} endpoint(s) POST aplicados sustituyendo todas las tuplas.`);
+        setStatusMessage(`${endpointsToApply.length} endpoint(s) POST aplicados sustituyendo todas las tuplas.${discardedImportedRows ? ' Se descartaron las filas del archivo importado.' : ''}`);
       } else if (endpointsToApply.length === 1) {
         setStatusMessage(`Endpoint compuesto anadido como nueva tupla POST: ${firstComposedEndpoint}`);
       } else {
@@ -7193,6 +7206,7 @@ function App() {
 
     if (normalizedRows.length === 0) {
       setRows([]);
+      setFileName('');
       setImportErrors(['El archivo no contiene filas utilizables.']);
       setStatusMessage(`No se pudo importar ${importedFileName}: no hay filas con contenido.`);
       return;
@@ -7229,6 +7243,7 @@ function App() {
       });
 
     setRows(importedRows);
+    setFileName(importedRows.length > 0 ? importedFileName : '');
     setSelectedRowIndex(0);
     setResults([]);
     setImportErrors(Array.from(new Set(warnings)));
@@ -7246,7 +7261,9 @@ function App() {
       return;
     }
 
-    setFileName(file.name);
+    setRows([]);
+    setFileName('');
+    setResults([]);
     setImportErrors([]);
     setStatusMessage(`Procesando ${file.name}...`);
 
@@ -8652,10 +8669,28 @@ function App() {
 
           {method !== 'GET' ? (
             <>
-              <label className="field stretch-row">
+              <div className="field stretch-row">
                 <span>Archivo Excel o CSV</span>
-                <input type="file" accept=".xlsx,.xls,.csv,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={handleFileImport} />
-              </label>
+                <div className="import-file-picker">
+                  <button type="button" className="ghost-button" onClick={() => fileImportInputRef.current?.click()}>
+                    Seleccionar archivo
+                  </button>
+                  <span className="import-file-name" aria-live="polite">
+                    {fileName && rows.length > 0
+                      ? `${fileName} (${rows.length} fila(s))`
+                      : 'Sin archivo importado'}
+                  </span>
+                  <input
+                    ref={fileImportInputRef}
+                    className="visually-hidden"
+                    type="file"
+                    accept=".xlsx,.xls,.csv,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    onChange={handleFileImport}
+                    aria-hidden="true"
+                    tabIndex={-1}
+                  />
+                </div>
+              </div>
 
               {bodyMode === 'RAW' ? (
                 <label className="field stretch stretch-full">

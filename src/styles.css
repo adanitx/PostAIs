@@ -1638,6 +1638,29 @@ pre {
   border: 0;
 }
 
+.import-file-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--input-bg);
+}
+
+.import-file-picker > button {
+  flex: 0 0 auto;
+  min-height: 40px;
+}
+
+.import-file-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .import-error-box {
   border: 1px solid var(--danger-border);
   background: var(--danger-bg);

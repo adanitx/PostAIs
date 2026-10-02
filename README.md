@@ -4,6 +4,8 @@
 
 - El historial de mensajería en lotes muestra la fecha y hora de recepción de la respuesta para cada request.
 - Los historiales nuevos conservan la marca temporal individual; los historiales anteriores siguen cargándose y muestran `-` cuando no disponen de ella.
+- Al sustituir un comando POST se descartan las filas importadas del comando anterior para evitar reutilizarlas en otra ejecución.
+- El selector de Excel/CSV indica el nombre del archivo y el número de filas que siguen activos; se limpia al sustituir el comando o iniciar otra importación.
 
 Consulta el detalle completo en [release-notes-v1.3.8.md](release-notes-v1.3.8.md).
 
