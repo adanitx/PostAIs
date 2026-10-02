@@ -1,5 +1,12 @@
 # PostAIs
 
+## Novedades v1.3.8
+
+- El historial de mensajería en lotes muestra la fecha y hora de recepción de la respuesta para cada request.
+- Los historiales nuevos conservan la marca temporal individual; los historiales anteriores siguen cargándose y muestran `-` cuando no disponen de ella.
+
+Consulta el detalle completo en [release-notes-v1.3.8.md](release-notes-v1.3.8.md).
+
 ## Novedades v1.3.7
 
 - El historial de lotes conserva las respuestas por fila, permite buscarlas y descargar el archivo de origen o las filas fallidas.

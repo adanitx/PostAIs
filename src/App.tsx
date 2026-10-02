@@ -1914,6 +1914,7 @@ function toSafeBatchRequestEntry(value: unknown): BatchRequestEntry | undefined 
 
   return {
     rowNumber: typeof value.rowNumber === 'number' ? value.rowNumber : 1,
+    receivedAt: typeof value.receivedAt === 'string' ? value.receivedAt : undefined,
     fields: Object.fromEntries(Object.entries(value.fields).map(([key, entryValue]) => [key, String(entryValue ?? '')])),
     endpoint: value.endpoint,
     ok: typeof value.ok === 'boolean' ? value.ok : false,
@@ -6027,6 +6028,7 @@ function App() {
     const errorCount = entries.length - successCount;
     const allRequests: BatchRequestEntry[] = entries.map((entry) => ({
       rowNumber: entry.row.rowNumber,
+      receivedAt: entry.receivedAt,
       fields: entry.row.fields,
       endpoint: entry.requestPreview.url || entry.finalUrl,
       ok: entry.ok,
@@ -6309,6 +6311,7 @@ function App() {
             <thead>
               <tr>
                 <th>#</th>
+                <th>FECHA</th>
                 {columns.map((column) => (
                   <th key={`batch-col-${entry.id}-${column}`}>{column}</th>
                 ))}
@@ -6321,7 +6324,7 @@ function App() {
             <tbody>
               {filteredRequests.length === 0 ? (
                 <tr>
-                  <td colSpan={columns.length + 5}>{t('No hay filas que coincidan con la búsqueda.')}</td>
+                  <td colSpan={columns.length + 6}>{t('No hay filas que coincidan con la búsqueda.')}</td>
                 </tr>
               ) : (
                 filteredRequests.map((request, index) => (
@@ -6331,6 +6334,7 @@ function App() {
                     data-history-batch-row-key={`${entry.id}-${request.rowNumber}`}
                   >
                     <td>{request.rowNumber}</td>
+                    <td>{request.receivedAt ? formatHistoryDate(request.receivedAt) : '-'}</td>
                     {columns.map((column) => (
                       <td key={`batch-cell-${entry.id}-${request.rowNumber}-${column}`}>{request.fields[column] ?? ''}</td>
                     ))}
@@ -8102,7 +8106,7 @@ function App() {
 
           {showSecretsMenu ? (
             <div className="secrets-menu-content">
-              <p className="muted-small">Guarda secretos para autenticacion sin dejarlos en el archivo importado.</p>
+              <p className="muted-small">Guarda secretos para autenticacion en solicitudes de forma temporal o persistente entre sesiones.</p>
               <div className="secret-form-row">
                 <label className="field compact-field">
                   <span>Nombre</span>

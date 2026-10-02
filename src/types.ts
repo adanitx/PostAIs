@@ -65,6 +65,7 @@ export type HistoryEntryOrigin = 'runtime' | 'collection-import';
 
 export interface BatchRequestEntry {
   rowNumber: number;
+  receivedAt?: string;
   fields: Record<string, string>;
   endpoint: string;
   ok: boolean;
