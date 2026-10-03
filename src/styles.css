@@ -1806,6 +1806,13 @@ pre {
   gap: 0.75rem;
 }
 
+.favorites-filter-groups {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.45rem;
+}
+
 .favorites-actions-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(280px, 1fr));
@@ -1837,6 +1844,39 @@ pre {
   background: var(--chip-hover-bg);
   border-color: var(--magenta);
   color: var(--chip-text);
+}
+
+.favorites-environment-filter-prod .chip {
+  border-color: rgba(40, 175, 98, 0.45);
+  color: #8cf3b6;
+}
+
+.favorites-environment-filter-prod .chip-button:hover:enabled,
+.favorites-environment-filter-prod .favorites-method-toggle-active {
+  background: rgba(40, 175, 98, 0.2);
+  border-color: rgba(40, 175, 98, 0.72);
+}
+
+.favorites-environment-filter-dev .chip {
+  border-color: rgba(57, 118, 255, 0.45);
+  color: #7ea9ff;
+}
+
+.favorites-environment-filter-dev .chip-button:hover:enabled,
+.favorites-environment-filter-dev .favorites-method-toggle-active {
+  background: rgba(57, 118, 255, 0.2);
+  border-color: rgba(57, 118, 255, 0.72);
+}
+
+.favorites-environment-filter-qa .chip {
+  border-color: color-mix(in srgb, var(--magenta) 60%, transparent 40%);
+  color: color-mix(in srgb, var(--text-on-accent) 72%, var(--magenta) 28%);
+}
+
+.favorites-environment-filter-qa .chip-button:hover:enabled,
+.favorites-environment-filter-qa .favorites-method-toggle-active {
+  background: color-mix(in srgb, var(--magenta) 24%, transparent 76%);
+  border-color: color-mix(in srgb, var(--magenta) 75%, transparent 25%);
 }
 
 .preview-panel,
@@ -2011,6 +2051,11 @@ pre {
   font-weight: 700;
   letter-spacing: 0.05em;
   border: 1px solid transparent;
+}
+
+.env-badge-select {
+  font-family: inherit;
+  cursor: pointer;
 }
 
 .env-badge-dev {

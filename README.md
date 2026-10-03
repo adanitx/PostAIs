@@ -1,5 +1,15 @@
 # PostAIs
 
+## Novedades v2.0.0
+
+- Los grupos de parámetros GET y POST reutilizan parámetros cuando su valor coincide y omiten combinaciones ya presentes en la tupla origen.
+- Al generar grupos, solo se crean nombres de parámetro nuevos para valores distintos; el modal no se cierra al pulsar fuera.
+- Los endpoints favoritos gestionan su entorno de forma independiente; los comandos favoritos se comparten entre DEV, QA y PROD.
+- Los filtros de entorno se muestran cuando hay varios disponibles y los endpoints existentes se migran a PROD la primera vez que se abre esta versión.
+- La importación v1 sigue aceptando comandos con entorno y endpoints sin entorno; las exportaciones conservan el formato actual.
+
+Consulta el detalle completo en [release-notes-v2.0.0.md](release-notes-v2.0.0.md).
+
 ## Novedades v1.3.8
 
 - El historial de mensajería en lotes muestra la fecha y hora de recepción de la respuesta para cada request.

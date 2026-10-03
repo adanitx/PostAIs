@@ -141,7 +141,7 @@ export interface FavoriteCommandEntry {
   defaultRawBody?: string;
   postResponseScript?: string;
   method: HttpMethod;
-  environment: FavoriteEnvironment;
+  environment?: FavoriteEnvironment;
   createdAt: string;
 }
 

@@ -62,6 +62,7 @@ const REQUEST_HISTORY_STORAGE_KEY = 'postais.requestHistory.v1';
 const FAVORITE_ENDPOINTS_STORAGE_KEY = 'postais.favoriteEndpoints.v1';
 const FAVORITE_BASE_ENDPOINTS_STORAGE_KEY = 'postais.favoriteBaseEndpoints.v1';
 const FAVORITE_COMMANDS_STORAGE_KEY = 'postais.favoriteCommands.v1';
+const FAVORITE_ENDPOINT_ENV_MIGRATION_KEY = 'postais.favoriteEndpointEnvironmentMigration.v1';
 const FAVORITE_REQUESTS_STORAGE_KEY = 'postais.favoriteRequests.v1';
 const SHOW_COMPOSER_FAVORITES_LIST_PREF_STORAGE_KEY = 'postais.showComposerFavoritesList';
 const BASIC_METHOD_FILTER_PREF_STORAGE_KEY = 'postais.basicMethodFilter';
@@ -173,7 +174,6 @@ interface FavoriteCommandDraftState {
   name: string;
   command: string;
   description: string;
-  environment: FavoriteEnvironment;
   method: HttpMethod;
   defaultRawBody: string;
   postResponseScript: string;
@@ -1686,7 +1686,6 @@ function toFavoriteCommandEntry(value: FavoriteCommandEntry | string): FavoriteC
       defaultRawBody: '',
       postResponseScript: '',
       method: 'GET',
-      environment: 'DEV',
       createdAt: new Date().toISOString(),
     };
   }
@@ -1708,7 +1707,6 @@ function toFavoriteCommandEntry(value: FavoriteCommandEntry | string): FavoriteC
     defaultRawBody: typeof value.defaultRawBody === 'string' ? value.defaultRawBody : '',
     postResponseScript: typeof value.postResponseScript === 'string' ? value.postResponseScript : '',
     method: isHttpMethod(value.method) ? value.method : 'GET',
-    environment: isFavoriteEnvironment(value.environment) ? value.environment : 'DEV',
     createdAt: typeof value.createdAt === 'string' ? value.createdAt : new Date().toISOString(),
   };
 }
@@ -1733,7 +1731,6 @@ function loadStoredFavoriteCommands(): FavoriteCommandEntry[] {
       (entry, index, array) => array.findIndex((candidate) => (
         candidate.command === entry.command
         && candidate.method === entry.method
-        && candidate.environment === entry.environment
         && (candidate.defaultRawBody ?? '') === (entry.defaultRawBody ?? '')
         && normalizeRestDescription(candidate.description ?? '') === normalizeRestDescription(entry.description ?? '')
         && (candidate.postResponseScript ?? '') === (entry.postResponseScript ?? '')
@@ -2700,7 +2697,6 @@ function App() {
     name: '',
     command: '',
     description: '',
-    environment: 'DEV',
     method: 'GET',
     defaultRawBody: '',
     postResponseScript: '',
@@ -2711,6 +2707,7 @@ function App() {
   const [historyBatchSelectedRowByEntryId, setHistoryBatchSelectedRowByEntryId] = useState<Record<string, number>>({});
   const [favoritesManagementSearch, setFavoritesManagementSearch] = useState('');
   const [favoritesManagementCommandMethodFilter, setFavoritesManagementCommandMethodFilter] = useState<'ALL' | HttpMethod>('ALL');
+  const [favoritesManagementEnvironmentFilter, setFavoritesManagementEnvironmentFilter] = useState<'ALL' | FavoriteEnvironment>('ALL');
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [confirmationInput, setConfirmationInput] = useState('');
   const [descriptionDialog, setDescriptionDialog] = useState<DescriptionDialogState | null>(null);
@@ -2777,13 +2774,42 @@ function App() {
     [favoriteBaseEndpoints, favoriteEnvironment],
   );
   const contextualFavoriteCommands = useMemo(
-    () => favoriteCommands.filter((entry) => entry.environment === favoriteEnvironment && entry.method === method),
-    [favoriteCommands, favoriteEnvironment, method],
+    () => favoriteCommands.filter((entry) => entry.method === method),
+    [favoriteCommands, method],
   );
-  const getFavoriteCommandsForEnvironment = useMemo(
-    () => favoriteCommands.filter((entry) => entry.environment === favoriteEnvironment && entry.method === 'GET'),
-    [favoriteCommands, favoriteEnvironment],
+  const getFavoriteCommands = useMemo(
+    () => favoriteCommands.filter((entry) => entry.method === 'GET'),
+    [favoriteCommands],
   );
+  const availableFavoriteEnvironments = useMemo(() => {
+    const environments = new Set<FavoriteEnvironment>([
+      ...favoriteEndpoints.map((entry) => entry.environment),
+      ...favoriteBaseEndpoints.map((entry) => entry.environment),
+      ...favoriteRequests.map((entry) => entry.environment),
+    ]);
+    return (['DEV', 'PROD', 'QA'] as FavoriteEnvironment[]).filter((environment) => environments.has(environment));
+  }, [favoriteBaseEndpoints, favoriteEndpoints, favoriteRequests]);
+  const dominantFavoriteEnvironment = useMemo(() => {
+    const counts: Record<FavoriteEnvironment, number> = { DEV: 0, QA: 0, PROD: 0 };
+    [...favoriteEndpoints, ...favoriteBaseEndpoints, ...favoriteRequests].forEach((entry) => {
+      counts[entry.environment] += 1;
+    });
+
+    if (counts.PROD >= counts.DEV && counts.PROD >= counts.QA) {
+      return 'prod';
+    }
+    if (counts.DEV >= counts.QA) {
+      return 'dev';
+    }
+    return 'qa';
+  }, [favoriteBaseEndpoints, favoriteEndpoints, favoriteRequests]);
+
+  useEffect(() => {
+    if (favoritesManagementEnvironmentFilter !== 'ALL' && !availableFavoriteEnvironments.includes(favoritesManagementEnvironmentFilter)) {
+      setFavoritesManagementEnvironmentFilter('ALL');
+    }
+  }, [availableFavoriteEnvironments, favoritesManagementEnvironmentFilter]);
+
   const selectedThemePaletteOption = useMemo(
     () => THEME_PALETTE_OPTIONS.find((palette) => palette.id === selectedThemePalette) ?? THEME_PALETTE_OPTIONS[0],
     [selectedThemePalette],
@@ -2864,7 +2890,7 @@ function App() {
   );
   const filteredFavoriteEndpoints = useMemo(
     () => favoriteEndpoints
-      .filter((entry) => entry.environment === favoriteEnvironment)
+      .filter((entry) => favoritesManagementEnvironmentFilter === 'ALL' || entry.environment === favoritesManagementEnvironmentFilter)
       .sort((left, right) => {
         const byEnvironment = compareFavoriteEnvironment(left.environment, right.environment);
         if (byEnvironment !== 0) {
@@ -2878,7 +2904,7 @@ function App() {
 
         return left.name.localeCompare(right.name);
       }),
-    [favoriteEndpoints, favoriteEnvironment],
+    [favoriteEndpoints, favoritesManagementEnvironmentFilter],
   );
   const filteredFavoriteBaseEndpointsForManagement = useMemo(() => {
     const normalizedQuery = favoritesManagementSearch.trim().toLowerCase();
@@ -2886,7 +2912,8 @@ function App() {
 
     const matchesTokens = (value: string) => queryTokens.every((token) => value.includes(token));
 
-    return contextualFavoriteBaseEndpoints
+    return favoriteBaseEndpoints
+      .filter((entry) => favoritesManagementEnvironmentFilter === 'ALL' || entry.environment === favoritesManagementEnvironmentFilter)
       .filter((entry) => {
         if (queryTokens.length === 0) {
           return true;
@@ -2898,7 +2925,7 @@ function App() {
         return matchesTokens(searchable);
       })
       .sort((left, right) => left.name.localeCompare(right.name));
-  }, [contextualFavoriteBaseEndpoints, favoritesManagementSearch]);
+  }, [favoriteBaseEndpoints, favoritesManagementEnvironmentFilter, favoritesManagementSearch]);
   const filteredFavoriteCommandsForManagement = useMemo(() => {
     const normalizedQuery = favoritesManagementSearch.trim().toLowerCase();
     const queryTokens = normalizedQuery.split(/\s+/).filter((token) => token.length > 0);
@@ -2906,14 +2933,13 @@ function App() {
     const matchesTokens = (value: string) => queryTokens.every((token) => value.includes(token));
 
     return favoriteCommands
-      .filter((entry) => entry.environment === favoriteEnvironment)
       .filter((entry) => favoritesManagementCommandMethodFilter === 'ALL' || entry.method === favoritesManagementCommandMethodFilter)
       .filter((entry) => {
         if (queryTokens.length === 0) {
           return true;
         }
 
-        const searchable = [entry.name, entry.command, entry.description, entry.method, entry.environment]
+        const searchable = [entry.name, entry.command, entry.description, entry.method]
           .join(' ')
           .toLowerCase();
         return matchesTokens(searchable);
@@ -2926,7 +2952,7 @@ function App() {
 
         return left.name.localeCompare(right.name);
       });
-  }, [favoriteCommands, favoriteEnvironment, favoritesManagementCommandMethodFilter, favoritesManagementSearch]);
+  }, [favoriteCommands, favoritesManagementCommandMethodFilter, favoritesManagementSearch]);
   const savedSecretsByKey = useMemo(
     () => Object.fromEntries(savedSecrets.map((secret) => [secret.key, secret.scope] as const)),
     [savedSecrets],
@@ -2955,7 +2981,8 @@ function App() {
   const filteredFavoriteRequests = useMemo(
     () =>
       favoriteRequests
-        .filter((entry) => entry.method === method && entry.environment === favoriteEnvironment)
+        .filter((entry) => entry.method === method)
+        .filter((entry) => favoritesManagementEnvironmentFilter === 'ALL' || entry.environment === favoritesManagementEnvironmentFilter)
         .sort((left, right) => {
           const byEnvironment = compareFavoriteEnvironment(left.environment, right.environment);
           if (byEnvironment !== 0) {
@@ -2969,7 +2996,7 @@ function App() {
 
           return left.name.localeCompare(right.name);
         }),
-    [favoriteEnvironment, favoriteRequests, method],
+    [favoriteRequests, favoritesManagementEnvironmentFilter, method],
   );
 
   const expectedVariables = useMemo(
@@ -3343,6 +3370,23 @@ function App() {
 
   useEffect(() => {
     try {
+      if (window.localStorage.getItem(FAVORITE_ENDPOINT_ENV_MIGRATION_KEY) === 'done') {
+        return;
+      }
+
+      setFavoriteEndpoints((current) => current.map((entry) => ({ ...entry, environment: 'PROD' })));
+      setFavoriteBaseEndpoints((current) => current.map((entry) => ({ ...entry, environment: 'PROD' })));
+      setFavoriteRequests((current) => current.map((entry) => ({ ...entry, environment: 'PROD' })));
+      setFavoriteEnvironment('PROD');
+      window.localStorage.setItem(FAVORITE_ENV_PREF_STORAGE_KEY, 'PROD');
+      window.localStorage.setItem(FAVORITE_ENDPOINT_ENV_MIGRATION_KEY, 'done');
+    } catch {
+      // Ignore persistence failures (private mode / restricted storage).
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
       window.localStorage.setItem(FAVORITE_COMMANDS_STORAGE_KEY, JSON.stringify(favoriteCommands));
     } catch {
       // Ignore persistence failures (private mode / restricted storage).
@@ -3413,7 +3457,6 @@ function App() {
 
   useEffect(() => {
     setFavoriteBaseEndpointDraft((current) => ({ ...current, environment: favoriteEnvironment }));
-    setFavoriteCommandDraft((current) => ({ ...current, environment: favoriteEnvironment }));
   }, [favoriteEnvironment]);
 
   useEffect(() => {
@@ -3518,7 +3561,6 @@ function App() {
     return favoriteCommands.some((entry) =>
       entry.command === normalized &&
       entry.method === endpointMethod &&
-      entry.environment === favoriteEnvironment &&
       (entry.defaultRawBody ?? '') === currentRaw
     );
   }
@@ -3609,16 +3651,15 @@ function App() {
       const exactMatch = current.find((entry) =>
         entry.command === normalized &&
         entry.method === endpointMethod &&
-        entry.environment === favoriteEnvironment &&
         (entry.defaultRawBody ?? '') === currentRaw
       );
 
       if (exactMatch) {
-        setStatusMessage(`Comando eliminado de favoritos (${endpointMethod}/${favoriteEnvironment}): ${normalized}`);
+        setStatusMessage(`Comando eliminado de favoritos (${endpointMethod}): ${normalized}`);
         return current.filter((entry) => entry.id !== exactMatch.id);
       }
 
-      setStatusMessage(`Comando guardado en favoritos (${endpointMethod}/${favoriteEnvironment}): ${normalized}`);
+      setStatusMessage(`Comando guardado en favoritos (${endpointMethod}): ${normalized}`);
       return [{
         id: createHistoryId(),
         name: normalizeFavoriteName(createDefaultFavoriteCommandName(normalized)),
@@ -3627,7 +3668,6 @@ function App() {
         defaultRawBody: currentRaw,
         postResponseScript: '',
         method: endpointMethod,
-        environment: favoriteEnvironment,
         createdAt: new Date().toISOString(),
       }, ...current];
     });
@@ -3649,7 +3689,6 @@ function App() {
       const existing = current.find((entry) => (
         entry.command === normalizedCommand
         && entry.method === favoriteCommandDraft.method
-        && entry.environment === favoriteCommandDraft.environment
         && (entry.defaultRawBody ?? '') === favoriteCommandDraft.defaultRawBody
         && normalizeRestDescription(entry.description ?? '') === normalizedDescription
         && (entry.postResponseScript ?? '') === favoriteCommandDraft.postResponseScript
@@ -3670,7 +3709,6 @@ function App() {
         defaultRawBody: favoriteCommandDraft.method === 'POST' ? favoriteCommandDraft.defaultRawBody : '',
         postResponseScript: favoriteCommandDraft.postResponseScript,
         method: favoriteCommandDraft.method,
-        environment: favoriteCommandDraft.environment,
         createdAt: new Date().toISOString(),
       }, ...current];
     });
@@ -3683,7 +3721,6 @@ function App() {
       name: '',
       command: '',
       description: '',
-      environment: favoriteEnvironment,
       method,
       defaultRawBody: '',
       postResponseScript: '',
@@ -3829,6 +3866,14 @@ function App() {
     }
 
     if (method === 'GET') {
+      const hasOnlyBlankGetTuple = getEndpointTuples.length === 1 && getEndpointTuples[0].trim() === '';
+      const baseIndex = mode === 'replace' || hasOnlyBlankGetTuple ? 0 : getEndpointTuples.length;
+      const retainedIds = mode === 'replace' || hasOnlyBlankGetTuple ? [] : getEndpointTupleIds.slice(0, baseIndex);
+      while (retainedIds.length < baseIndex) {
+        retainedIds.push(createHistoryId());
+      }
+      const newIds = [...retainedIds, ...endpointsToApply.map(() => createHistoryId())];
+
       setGetEndpointTuples((current) => {
         const hasOnlyBlankTuple = current.length === 1 && current[0].trim() === '';
         if (mode === 'replace') {
@@ -3838,17 +3883,27 @@ function App() {
         return hasOnlyBlankTuple ? endpointsToApply : [...current, ...endpointsToApply];
       });
 
-      const selectedIndexForGet = mode === 'replace'
-        ? 0
-        : ((getEndpointTuples.length === 1 && getEndpointTuples[0].trim() === '') ? 0 : getEndpointTuples.length);
+      setGetEndpointTupleIds(newIds);
+      setEndpointRuntimeParamsByTupleId((prev) => {
+        const next = mode === 'replace' ? {} : { ...prev };
+        endpointsToApply.forEach((composedEndpoint, endpointIndex) => {
+          const tupleId = newIds[baseIndex + endpointIndex];
+          next[tupleId] = Object.fromEntries(
+            extractEndpointRuntimeParams(composedEndpoint).map(({ name }) => [name, '']),
+          );
+        });
+
+        return syncMatchingParamValuesAcrossTuples(
+          next,
+          mode === 'replace' ? {} : pathParamValues,
+        ).runtimeParamsByTupleId;
+      });
+
+      const selectedIndexForGet = baseIndex;
 
       setSelectedGetEndpointIndex(selectedIndexForGet);
       setHideGetEndpointMatchesByIndex((current) => {
         const next = mode === 'replace' ? {} : { ...current };
-        const baseIndex = mode === 'replace'
-          ? 0
-          : ((getEndpointTuples.length === 1 && getEndpointTuples[0].trim() === '') ? 0 : getEndpointTuples.length);
-
         next[baseIndex] = true;
         for (let offset = 1; offset < endpointsToApply.length; offset += 1) {
           next[baseIndex + offset] = true;
@@ -3913,10 +3968,15 @@ function App() {
           const tupleIndex = baseIndex + idx;
           const tupleId = newIds[tupleIndex];
           if (tupleId) {
-            next[tupleId] = next[tupleId] ?? {};
+            next[tupleId] = Object.fromEntries(
+              extractEndpointRuntimeParams(endpointsToApply[idx]).map(({ name }) => [name, '']),
+            );
           }
         }
-        return next;
+        return syncMatchingParamValuesAcrossTuples(
+          next,
+          mode === 'replace' ? {} : pathParamValues,
+        ).runtimeParamsByTupleId;
       });
       
       setHidePostEndpointMatchesByIndex((current) => {
@@ -3978,7 +4038,7 @@ function App() {
   }
 
   function resolveFavoriteCommandForResult(result: DispatchResult): FavoriteCommandEntry | null {
-    const matches = getFavoriteCommandsForEnvironment.filter((entry) => doesResultMatchFavoriteCommand(result, entry));
+    const matches = getFavoriteCommands.filter((entry) => doesResultMatchFavoriteCommand(result, entry));
     if (matches.length === 0) {
       return null;
     }
@@ -5006,14 +5066,26 @@ function App() {
 
   function openGetEndpointParamGroupDialog(index: number) {
     const tupleEndpoint = getEndpointTuples[index] ?? '';
-    const tupleId = getEndpointTupleIds[index] ?? '';
+    let tupleId = getEndpointTupleIds[index] ?? '';
     const templateTokens = extractEndpointRuntimeParams(tupleEndpoint)
       .filter((param) => param.kind === 'template')
       .map((param) => param.name);
 
-    if (!tupleEndpoint.trim() || !tupleId) {
+    if (!tupleEndpoint.trim()) {
       setStatusMessage('No se pudo abrir el grupo de parametros: tupla GET no valida.');
       return;
+    }
+
+    if (!tupleId) {
+      tupleId = createHistoryId();
+      setGetEndpointTupleIds((current) => {
+        const next = [...current];
+        while (next.length <= index) {
+          next.push(createHistoryId());
+        }
+        next[index] = tupleId;
+        return next;
+      });
     }
 
     if (templateTokens.length === 0) {
@@ -5084,6 +5156,16 @@ function App() {
     }
 
     const sourceParams = endpointRuntimeParamsByTupleId[sourceTupleId] ?? pathParamValues[sourceEndpoint] ?? {};
+    if (endpointParamGroupDialog.mode === 'relations' && endpointParamGroupDialog.tokens.length >= 2) {
+      assignments = assignments.filter((assignment) => (
+        !endpointParamGroupDialog.tokens.every((token) => (
+          (assignment[token] ?? sourceParams[token] ?? '') === (sourceParams[token] ?? '')
+        ))
+      ));
+    } else {
+      groupedValues = groupedValues.filter((value) => value !== (sourceParams[endpointParamGroupDialog.selectedToken] ?? ''));
+    }
+
     const involvedTokens = endpointParamGroupDialog.mode === 'relations' && endpointParamGroupDialog.tokens.length >= 2
       ? Array.from(new Set(endpointParamGroupDialog.relations.flatMap((relation) => [relation.sourceToken, relation.targetToken])))
       : [endpointParamGroupDialog.selectedToken];
@@ -5091,25 +5173,75 @@ function App() {
     const generationCount = endpointParamGroupDialog.mode === 'relations' && endpointParamGroupDialog.tokens.length >= 2
       ? assignments.length
       : groupedValues.length;
+    if (generationCount === 0) {
+      setStatusMessage('No hay combinaciones nuevas: los valores ya están representados en la tupla origen.');
+      closeEndpointParamGroupDialog();
+      return;
+    }
+
     const newTupleIds = Array.from({ length: generationCount }, () => createHistoryId());
 
-    // Give each generated tuple a unique parameter name to prevent cross-tuple value sync.
     const currentEndpointsForMethod = endpointParamGroupDialog.targetMethod === 'GET' ? getEndpointTuples : postEndpointTuples;
     const contextEndpoints = shouldDropSourceTuple
       ? currentEndpointsForMethod.filter((_, idx) => idx !== sourceIndex)
       : [...currentEndpointsForMethod];
+    const parameterNamesByValue = new Map<string, Map<string, string>>();
+    const usedParameterNames = new Set<string>();
+    contextEndpoints.forEach((existingEndpoint) => {
+      extractEndpointRuntimeParams(existingEndpoint).forEach(({ name }) => usedParameterNames.add(name));
+    });
+    const originalTokens = extractEndpointRuntimeParams(sourceEndpoint).map((param) => param.name);
+    originalTokens.forEach((token) => {
+      const value = sourceParams[token] ?? '';
+      const namesByValue = parameterNamesByValue.get(token) ?? new Map<string, string>();
+      namesByValue.set(value, token);
+      parameterNamesByValue.set(token, namesByValue);
+    });
+
     const newEndpoints: string[] = [];
-    for (let i = 0; i < generationCount; i++) {
-      newEndpoints.push(renameDuplicateEndpointParams(sourceEndpoint, [...contextEndpoints, ...newEndpoints]));
+    for (let valueIndex = 0; valueIndex < generationCount; valueIndex += 1) {
+      const assignment = endpointParamGroupDialog.mode === 'relations' && endpointParamGroupDialog.tokens.length >= 2
+        ? assignments[valueIndex] ?? {}
+        : { [endpointParamGroupDialog.selectedToken]: groupedValues[valueIndex] ?? '' };
+      const renameMap = new Map<string, string>();
+
+      originalTokens.forEach((token) => {
+        const value = assignment[token] ?? sourceParams[token] ?? '';
+        const namesByValue = parameterNamesByValue.get(token) ?? new Map<string, string>();
+        let parameterName = namesByValue.get(value);
+
+        if (!parameterName) {
+          parameterName = token;
+          let suffix = 1;
+          while (usedParameterNames.has(parameterName)) {
+            parameterName = `${token}${suffix}`;
+            suffix += 1;
+          }
+          namesByValue.set(value, parameterName);
+          parameterNamesByValue.set(token, namesByValue);
+          usedParameterNames.add(parameterName);
+        }
+
+        renameMap.set(token, parameterName);
+      });
+
+      let renamedEndpoint = sourceEndpoint.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, (match, name: string) => {
+        const nextName = renameMap.get(name);
+        return nextName && nextName !== name ? match.replace(name, nextName) : match;
+      });
+      renamedEndpoint = renamedEndpoint.replace(genericPlaceholderPattern, (match, rawToken: string) => {
+        const token = rawToken.trim();
+        const nextName = renameMap.get(token);
+        return nextName && nextName !== token ? `{{${nextName}}}` : match;
+      });
+      newEndpoints.push(renamedEndpoint);
     }
 
     // Capture dialog state for use inside closures (TypeScript narrowing).
     const dialogSnapshot = endpointParamGroupDialog;
 
-    // Build a per-tuple param map with keys matching the renamed endpoint tokens.
     function buildGroupTupleParams(valueIndex: number): Record<string, string> {
       const renamedEndpoint = newEndpoints[valueIndex] ?? sourceEndpoint;
-      const originalTokens = extractEndpointRuntimeParams(sourceEndpoint).map((p) => p.name);
       const renamedTokens = extractEndpointRuntimeParams(renamedEndpoint).map((p) => p.name);
 
       const remapped: Record<string, string> = {};
@@ -5230,6 +5362,12 @@ function App() {
   function renameFavoriteBaseEndpoint(id: string, name: string) {
     setFavoriteBaseEndpoints((current) => current.map((entry) => (
       entry.id === id ? { ...entry, name: name.slice(0, MAX_FAVORITE_NAME_LENGTH) } : entry
+    )));
+  }
+
+  function setFavoriteBaseEndpointEnvironment(id: string, environment: FavoriteEnvironment) {
+    setFavoriteBaseEndpoints((current) => current.map((entry) => (
+      entry.id === id ? { ...entry, environment } : entry
     )));
   }
 
@@ -5638,7 +5776,7 @@ function App() {
             id: createHistoryId(),
             createdAt: new Date().toISOString(),
             description: normalizedDescription,
-            environment: isFavoriteEnvironment(item.environment) ? item.environment : 'DEV',
+            environment: isFavoriteEnvironment(item.environment) ? item.environment : 'PROD',
           };
         });
 
@@ -5717,9 +5855,10 @@ function App() {
       }
 
       const imported = parsed.items
-        .filter((item): item is FavoriteBaseEndpointEntry => !!item && typeof item === 'object' && typeof item.baseUrl === 'string' && isFavoriteEnvironment(item.environment))
+        .filter((item): item is FavoriteBaseEndpointEntry => !!item && typeof item === 'object' && typeof item.baseUrl === 'string')
         .map((item) => ({
           ...item,
+          environment: isFavoriteEnvironment(item.environment) ? item.environment : 'PROD',
           id: createHistoryId(),
           createdAt: new Date().toISOString(),
           name: normalizeFavoriteName(item.name || createDefaultFavoriteBaseEndpointName(item.baseUrl)),
@@ -5826,9 +5965,10 @@ function App() {
       }
 
       const imported = parsed.items
-        .filter((item): item is FavoriteCommandEntry => !!item && typeof item === 'object' && typeof item.command === 'string' && isHttpMethod(item.method) && isFavoriteEnvironment(item.environment))
+        .filter((item): item is FavoriteCommandEntry => !!item && typeof item === 'object' && typeof item.command === 'string' && isHttpMethod(item.method))
         .map((item) => ({
           ...item,
+          environment: undefined,
           id: createHistoryId(),
           createdAt: new Date().toISOString(),
           name: normalizeFavoriteName(item.name || createDefaultFavoriteCommandName(item.command)),
@@ -5846,7 +5986,6 @@ function App() {
 
       const buildKey = (entry: FavoriteCommandEntry) => [
         entry.method,
-        entry.environment,
         normalizeFavoriteCommand(entry.command),
         entry.defaultRawBody ?? '',
         normalizeRestDescription(entry.description ?? ''),
@@ -9654,17 +9793,6 @@ function App() {
                             <option value="POST">POST</option>
                           </select>
                         </label>
-                        <label className="field compact-field">
-                          <span>Entorno</span>
-                          <select
-                            value={favoriteCommandDraft.environment}
-                            onChange={(event) => setFavoriteCommandDraft((current) => ({ ...current, environment: event.target.value as FavoriteEnvironment }))}
-                          >
-                            <option value="DEV">DEV</option>
-                            <option value="PROD">PROD</option>
-                            <option value="QA">QA</option>
-                          </select>
-                        </label>
                         {favoriteCommandDraft.method === 'POST' ? (
                           <label className="field stretch-full">
                             <span>RAW por defecto</span>
@@ -9700,7 +9828,6 @@ function App() {
                               name: '',
                               command: '',
                               description: '',
-                              environment: favoriteEnvironment,
                               method,
                               defaultRawBody: '',
                               postResponseScript: '',
@@ -9730,31 +9857,56 @@ function App() {
                       aria-label="Buscar en gestion de favoritos"
                     />
                   </label>
-                  <div className="chip-row favorites-method-toggle" role="group" aria-label="Filtrar comandos por metodo">
-                    <button
-                      type="button"
-                      className={`chip chip-button ${favoritesManagementCommandMethodFilter === 'ALL' ? 'favorites-method-toggle-active' : ''}`}
-                      onClick={() => setFavoritesManagementCommandMethodFilter('ALL')}
-                      aria-pressed={favoritesManagementCommandMethodFilter === 'ALL'}
-                    >
-                      Todos
-                    </button>
-                    <button
-                      type="button"
-                      className={`chip chip-button ${favoritesManagementCommandMethodFilter === 'GET' ? 'favorites-method-toggle-active' : ''}`}
-                      onClick={() => setFavoritesManagementCommandMethodFilter('GET')}
-                      aria-pressed={favoritesManagementCommandMethodFilter === 'GET'}
-                    >
-                      GET
-                    </button>
-                    <button
-                      type="button"
-                      className={`chip chip-button ${favoritesManagementCommandMethodFilter === 'POST' ? 'favorites-method-toggle-active' : ''}`}
-                      onClick={() => setFavoritesManagementCommandMethodFilter('POST')}
-                      aria-pressed={favoritesManagementCommandMethodFilter === 'POST'}
-                    >
-                      POST
-                    </button>
+                  <div className="favorites-filter-groups">
+                    {availableFavoriteEnvironments.length > 1 ? (
+                      <div className={`chip-row favorites-method-toggle favorites-environment-filter favorites-environment-filter-${dominantFavoriteEnvironment}`} role="group" aria-label="Filtrar endpoints por entorno">
+                      <button
+                        type="button"
+                        className={`chip chip-button ${favoritesManagementEnvironmentFilter === 'ALL' ? 'favorites-method-toggle-active' : ''}`}
+                        onClick={() => setFavoritesManagementEnvironmentFilter('ALL')}
+                        aria-pressed={favoritesManagementEnvironmentFilter === 'ALL'}
+                      >
+                        Todos
+                      </button>
+                      {availableFavoriteEnvironments.map((environment) => (
+                        <button
+                          key={`favorite-env-filter-${environment}`}
+                          type="button"
+                          className={`chip chip-button ${favoritesManagementEnvironmentFilter === environment ? 'favorites-method-toggle-active' : ''}`}
+                          onClick={() => setFavoritesManagementEnvironmentFilter(environment)}
+                          aria-pressed={favoritesManagementEnvironmentFilter === environment}
+                        >
+                          {environment}
+                        </button>
+                      ))}
+                      </div>
+                    ) : null}
+                    <div className="chip-row favorites-method-toggle" role="group" aria-label="Filtrar comandos por metodo">
+                      <button
+                        type="button"
+                        className={`chip chip-button ${favoritesManagementCommandMethodFilter === 'ALL' ? 'favorites-method-toggle-active' : ''}`}
+                        onClick={() => setFavoritesManagementCommandMethodFilter('ALL')}
+                        aria-pressed={favoritesManagementCommandMethodFilter === 'ALL'}
+                      >
+                        Todos
+                      </button>
+                      <button
+                        type="button"
+                        className={`chip chip-button ${favoritesManagementCommandMethodFilter === 'GET' ? 'favorites-method-toggle-active' : ''}`}
+                        onClick={() => setFavoritesManagementCommandMethodFilter('GET')}
+                        aria-pressed={favoritesManagementCommandMethodFilter === 'GET'}
+                      >
+                        GET
+                      </button>
+                      <button
+                        type="button"
+                        className={`chip chip-button ${favoritesManagementCommandMethodFilter === 'POST' ? 'favorites-method-toggle-active' : ''}`}
+                        onClick={() => setFavoritesManagementCommandMethodFilter('POST')}
+                        aria-pressed={favoritesManagementCommandMethodFilter === 'POST'}
+                      >
+                        POST
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -9772,6 +9924,19 @@ function App() {
                   <div className="history-list">
                     {filteredFavoriteBaseEndpointsForManagement.map((entry) => (
                       <article key={entry.id} className="history-card">
+                        <div className="chip-row favorite-summary-badges">
+                          <select
+                            className={`env-badge env-badge-select env-badge-${entry.environment.toLowerCase()}`}
+                            value={entry.environment}
+                            onChange={(event) => setFavoriteBaseEndpointEnvironment(entry.id, event.target.value as FavoriteEnvironment)}
+                            aria-label={`Entorno del endpoint base favorito ${entry.baseUrl}`}
+                            title="Cambiar entorno del endpoint"
+                          >
+                            <option value="DEV">DEV</option>
+                            <option value="PROD">PROD</option>
+                            <option value="QA">QA</option>
+                          </select>
+                        </div>
                         <div className="history-card-title">
                           <input
                             value={entry.name}
@@ -9870,7 +10035,6 @@ function App() {
                             >
                               {entry.method}
                             </button>
-                            <span className={`env-badge env-badge-${entry.environment.toLowerCase()}`}>{entry.environment}</span>
                           </div>
                           <div className="history-card-title">
                             <input
@@ -10029,7 +10193,17 @@ function App() {
                             </button>
                             <div className="chip-row favorite-summary-badges">
                               <span className="chip">{entry.method}</span>
-                              <span className={`env-badge env-badge-${entry.environment.toLowerCase()}`}>{entry.environment}</span>
+                              <select
+                                className={`env-badge env-badge-select env-badge-${entry.environment.toLowerCase()}`}
+                                value={entry.environment}
+                                onChange={(event) => setFavoriteEndpointEnvironment(entry.id, event.target.value as FavoriteEnvironment)}
+                                aria-label={`Entorno del endpoint favorito ${entry.url}`}
+                                title="Cambiar entorno del endpoint"
+                              >
+                                <option value="DEV">DEV</option>
+                                <option value="PROD">PROD</option>
+                                <option value="QA">QA</option>
+                              </select>
                             </div>
                           </div>
                           <div className="favorite-match-button favorite-summary-surface">
@@ -10055,11 +10229,6 @@ function App() {
                           <select value={entry.method} onChange={(event) => setFavoriteEndpoints((current) => current.map((candidate) => (candidate.id === entry.id ? { ...candidate, method: event.target.value as HttpMethod } : candidate)))} aria-label={`Metodo del endpoint favorito ${entry.url}`}>
                             <option value="GET">GET</option>
                             <option value="POST">POST</option>
-                          </select>
-                          <select value={entry.environment} onChange={(event) => setFavoriteEndpointEnvironment(entry.id, event.target.value as FavoriteEnvironment)} aria-label={`Entorno del endpoint favorito ${entry.url}`}>
-                            <option value="DEV">DEV</option>
-                            <option value="PROD">PROD</option>
-                            <option value="QA">QA</option>
                           </select>
                         </div>
                         <div className="action-row">
@@ -10210,7 +10379,7 @@ function App() {
         ) : null}
 
         {endpointParamGroupDialog ? (
-          <div className="modal-backdrop" role="presentation" onClick={closeEndpointParamGroupDialog}>
+          <div className="modal-backdrop" role="presentation">
             <section
               className="confirm-dialog"
               role="dialog"
