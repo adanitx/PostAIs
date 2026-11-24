@@ -21,4 +21,3 @@
 
 - Portable Windows: `PostAIs-portable.zip`.
 - SHA-256: `015EDA4EC46B35E07103B4BE2A05102E420C2CA60FB8AEB78BAA52E4230F9ABE`.
-- El paquete se generó desde cero y no incluye cachés, backups ni datos locales de usuario.
