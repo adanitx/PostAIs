@@ -12,10 +12,17 @@ export type FavoriteEnvironment = 'DEV' | 'QA' | 'PROD';
 export interface RequestPreview {
   method: HttpMethod;
   url: string;
+  endpointTemplate?: string;
+  endpointKey?: string;
+  endpointRuntimeParams?: Record<string, string>;
   headers: Record<string, string>;
   query: Record<string, string>;
+  headersTemplate?: Record<string, unknown>;
+  queryTemplate?: Record<string, unknown>;
+  restParameters?: Record<string, string>;
   bodyMode: BodyMode;
   body?: unknown;
+  bodyTemplate?: unknown;
 }
 
 export interface PostRequestPayload {
@@ -68,6 +75,13 @@ export interface BatchRequestEntry {
   receivedAt?: string;
   fields: Record<string, string>;
   endpoint: string;
+  endpointKey?: string;
+  endpointTemplate?: string;
+  restParameters?: Record<string, string>;
+  headers?: Record<string, unknown>;
+  query?: Record<string, unknown>;
+  bodyMode?: BodyMode;
+  body?: unknown;
   ok: boolean;
   status?: number;
   statusText?: string;
@@ -77,11 +91,24 @@ export interface BatchRequestEntry {
   responseHeaders?: Record<string, string>;
 }
 
+export interface BatchEndpointConfiguration {
+  key: string;
+  endpoint: string;
+  endpointTemplate: string;
+  runtimeParams: Record<string, string>;
+  headersTemplate: Record<string, unknown>;
+  queryTemplate: Record<string, unknown>;
+  bodyMode: BodyMode;
+  bodyTemplate?: unknown;
+}
+
 export interface BatchHistorySummary {
   totalRequests: number;
   successCount: number;
   errorCount: number;
   endpoints: string[];
+  endpointConfigurations?: BatchEndpointConfiguration[];
+  restParameters?: Record<string, string[]>;
   sourceFileName?: string;
   sourceColumns?: string[];
   sourceHasHeaderRow?: boolean;
@@ -107,6 +134,9 @@ export interface RequestHistoryEntry {
   statusText?: string;
   durationMs?: number;
   finalUrl?: string;
+  responseBody?: unknown;
+  responseHeaders?: Record<string, string>;
+  restParameters?: Record<string, string[]>;
   errorDetail?: string | null;
   scriptOutput?: unknown;
   scriptCommandId?: string;

@@ -1,5 +1,15 @@
 # PostAIs
 
+## Novedades v2.1.0
+
+- El timeout predeterminado se configura desde Configuración, se conserva entre sesiones y admite valores de 1.000 a 120.000 ms.
+- Los errores por timeout en lotes con otras solicitudes correctas muestran un aviso para comprobar el procesamiento antes de reenviar.
+- El historial individual conserva la respuesta HTTP original, incluidas sus cabeceras y cuerpo, en un panel desplegable.
+- El historial de lotes muestra los valores de parámetros REST y permite seleccionar con casillas qué endpoints cargar en Inicio, recuperando sus parámetros y filas importadas.
+- Las nuevas etiquetas y avisos están traducidos a español, inglés, gallego y catalán.
+
+Consulta el detalle completo en [release-notes-v2.1.0.md](release-notes-v2.1.0.md).
+
 ## Novedades v2.0.0
 
 - Los grupos de parámetros GET y POST reutilizan parámetros cuando su valor coincide y omiten combinaciones ya presentes en la tupla origen.

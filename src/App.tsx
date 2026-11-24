@@ -3,6 +3,7 @@ import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
 import type {
   AuthorizationScheme,
+  BatchEndpointConfiguration,
   BatchHistorySummary,
   BatchRequestEntry,
   BodyMode,
@@ -51,6 +52,7 @@ const defaultBodyTemplate = JSON.stringify(
 const exactPlaceholderPattern = /^\s*{{\s*([^{}]+?)\s*}}\s*$/;
 const genericPlaceholderPattern = /{{\s*([^{}]+?)\s*}}/g;
 const TLS_PREF_STORAGE_KEY = 'postais.allowInsecureTls';
+const TIMEOUT_PREF_STORAGE_KEY = 'postais.timeoutMs';
 const THEME_PREF_STORAGE_KEY = 'postais.theme';
 const THEME_PALETTE_PREF_STORAGE_KEY = 'postais.themePalette';
 const METHOD_PREF_STORAGE_KEY = 'postais.method';
@@ -1914,6 +1916,15 @@ function toSafeBatchRequestEntry(value: unknown): BatchRequestEntry | undefined 
     receivedAt: typeof value.receivedAt === 'string' ? value.receivedAt : undefined,
     fields: Object.fromEntries(Object.entries(value.fields).map(([key, entryValue]) => [key, String(entryValue ?? '')])),
     endpoint: value.endpoint,
+    endpointKey: typeof value.endpointKey === 'string' ? value.endpointKey : undefined,
+    endpointTemplate: typeof value.endpointTemplate === 'string' ? value.endpointTemplate : undefined,
+    restParameters: isRecord(value.restParameters)
+      ? Object.fromEntries(Object.entries(value.restParameters).map(([key, entryValue]) => [key, String(entryValue ?? '')]))
+      : undefined,
+    headers: isRecord(value.headers) ? value.headers : undefined,
+    query: isRecord(value.query) ? value.query : undefined,
+    bodyMode: isBodyMode(value.bodyMode) ? value.bodyMode : undefined,
+    body: value.body,
     ok: typeof value.ok === 'boolean' ? value.ok : false,
     status: typeof value.status === 'number' ? value.status : undefined,
     statusText: typeof value.statusText === 'string' ? value.statusText : undefined,
@@ -1936,6 +1947,12 @@ function toSafeBatchSummary(value: unknown): BatchHistorySummary | undefined {
     successCount: typeof value.successCount === 'number' ? value.successCount : 0,
     errorCount: typeof value.errorCount === 'number' ? value.errorCount : 0,
     endpoints: value.endpoints.map((endpoint) => String(endpoint ?? '')),
+    endpointConfigurations: Array.isArray(value.endpointConfigurations)
+      ? value.endpointConfigurations
+        .map(toSafeBatchEndpointConfiguration)
+        .filter((configuration): configuration is BatchEndpointConfiguration => configuration !== undefined)
+      : undefined,
+    restParameters: toSafeRestParameterMap(value.restParameters),
     sourceFileName: typeof value.sourceFileName === 'string' ? value.sourceFileName : undefined,
     sourceColumns: Array.isArray(value.sourceColumns) ? value.sourceColumns.map((column) => String(column ?? '')) : undefined,
     sourceHasHeaderRow: typeof value.sourceHasHeaderRow === 'boolean' ? value.sourceHasHeaderRow : false,
@@ -1943,6 +1960,41 @@ function toSafeBatchSummary(value: unknown): BatchHistorySummary | undefined {
     requestsComplete: typeof value.requestsComplete === 'boolean' ? value.requestsComplete : false,
     truncated: typeof value.truncated === 'boolean' ? value.truncated : undefined,
   };
+}
+
+function toSafeBatchEndpointConfiguration(value: unknown): BatchEndpointConfiguration | undefined {
+  if (
+    !isRecord(value)
+    || typeof value.key !== 'string'
+    || typeof value.endpoint !== 'string'
+    || typeof value.endpointTemplate !== 'string'
+    || !isRecord(value.runtimeParams)
+    || !isRecord(value.headersTemplate)
+    || !isRecord(value.queryTemplate)
+  ) {
+    return undefined;
+  }
+
+  return {
+    key: value.key,
+    endpoint: value.endpoint,
+    endpointTemplate: value.endpointTemplate,
+    runtimeParams: Object.fromEntries(Object.entries(value.runtimeParams).map(([key, entryValue]) => [key, String(entryValue ?? '')])),
+    headersTemplate: value.headersTemplate,
+    queryTemplate: value.queryTemplate,
+    bodyMode: isBodyMode(value.bodyMode) ? value.bodyMode : 'RAW',
+    bodyTemplate: value.bodyTemplate,
+  };
+}
+
+function toSafeRestParameterMap(value: unknown): Record<string, string[]> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  return Object.fromEntries(Object.entries(value).flatMap(([name, values]) => (
+    Array.isArray(values) ? [[name, values.map((entry) => String(entry ?? ''))]] : []
+  )));
 }
 
 function loadStoredHistory(): RequestHistoryEntry[] {
@@ -1987,6 +2039,11 @@ function loadStoredHistory(): RequestHistoryEntry[] {
           statusText: typeof entry.statusText === 'string' ? entry.statusText : undefined,
           durationMs: typeof entry.durationMs === 'number' ? entry.durationMs : undefined,
           finalUrl: typeof entry.finalUrl === 'string' ? entry.finalUrl : undefined,
+          responseBody: entry.responseBody,
+          responseHeaders: isRecord(entry.responseHeaders)
+            ? Object.fromEntries(Object.entries(entry.responseHeaders).map(([key, value]) => [key, String(value ?? '')]))
+            : undefined,
+          restParameters: toSafeRestParameterMap(entry.restParameters),
           errorDetail: typeof entry.errorDetail === 'string' || entry.errorDetail === null ? entry.errorDetail : undefined,
           scriptOutput: entry.scriptOutput,
           scriptCommandId: typeof entry.scriptCommandId === 'string' ? entry.scriptCommandId : undefined,
@@ -2588,7 +2645,14 @@ function App() {
     }
   });
   const [delayMs, setDelayMs] = useState(0);
-  const [timeoutMs, setTimeoutMs] = useState(15000);
+  const [timeoutMs, setTimeoutMs] = useState(() => {
+    try {
+      const stored = Number(window.localStorage.getItem(TIMEOUT_PREF_STORAGE_KEY));
+      return Number.isInteger(stored) && stored >= 1000 && stored <= 120000 ? stored : 15000;
+    } catch {
+      return 15000;
+    }
+  });
   const [showSecretsMenu, setShowSecretsMenu] = useState(false);
   const [isNightMode, setIsNightMode] = useState(() => {
     try {
@@ -2705,6 +2769,7 @@ function App() {
   const [historyMethodFilter, setHistoryMethodFilter] = useState<'ALL' | HttpMethod>('ALL');
   const [historyBatchSearchByEntryId, setHistoryBatchSearchByEntryId] = useState<Record<string, string>>({});
   const [historyBatchSelectedRowByEntryId, setHistoryBatchSelectedRowByEntryId] = useState<Record<string, number>>({});
+  const [historyBatchEndpointSelectionByEntryId, setHistoryBatchEndpointSelectionByEntryId] = useState<Record<string, string[]>>({});
   const [favoritesManagementSearch, setFavoritesManagementSearch] = useState('');
   const [favoritesManagementCommandMethodFilter, setFavoritesManagementCommandMethodFilter] = useState<'ALL' | HttpMethod>('ALL');
   const [favoritesManagementEnvironmentFilter, setFavoritesManagementEnvironmentFilter] = useState<'ALL' | FavoriteEnvironment>('ALL');
@@ -3197,6 +3262,14 @@ function App() {
       // Ignore persistence failures (private mode / restricted storage).
     }
   }, [allowInsecureTls]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(TIMEOUT_PREF_STORAGE_KEY, String(timeoutMs));
+    } catch {
+      // Ignore persistence failures (private mode / restricted storage).
+    }
+  }, [timeoutMs]);
 
   useEffect(() => {
     try {
@@ -4519,6 +4592,38 @@ function App() {
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [resultDetailsContextMenu]);
+
+  useEffect(() => {
+    const selectTextBlockOnKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'a') {
+        return;
+      }
+
+      const activeElement = document.activeElement;
+      if (activeElement && activeElement !== document.body && activeElement !== document.documentElement) {
+        return;
+      }
+
+      const selection = window.getSelection();
+      const anchorNode = selection?.anchorNode;
+      const textBlock = anchorNode instanceof Element
+        ? anchorNode.closest('pre')
+        : anchorNode?.parentElement?.closest('pre');
+
+      if (!selection || !textBlock) {
+        return;
+      }
+
+      event.preventDefault();
+      const range = document.createRange();
+      range.selectNodeContents(textBlock);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    };
+
+    window.addEventListener('keydown', selectTextBlockOnKeyDown);
+    return () => window.removeEventListener('keydown', selectTextBlockOnKeyDown);
+  }, []);
 
   async function copyAllResultsToClipboard() {
     if (results.length === 0) {
@@ -6153,6 +6258,7 @@ function App() {
       url: requestPreview.url,
       headers: requestPreview.headers,
       query: requestPreview.query,
+      restParameters: Object.fromEntries(Object.entries(requestPreview.restParameters ?? {}).map(([name, value]) => [name, [value]])),
       bodyMode: requestPreview.bodyMode,
       body: requestPreview.body,
       row,
@@ -6161,6 +6267,8 @@ function App() {
       statusText: response.statusText,
       durationMs: response.durationMs,
       finalUrl: response.finalUrl,
+      responseBody: response.responseBody,
+      responseHeaders: response.responseHeaders,
       errorDetail: response.errorDetail,
       ...(scriptVisualization ?? {}),
     });
@@ -6183,6 +6291,7 @@ function App() {
       receivedAt: entry.receivedAt,
       fields: entry.row.fields,
       endpoint: entry.requestPreview.url || entry.finalUrl,
+      endpointKey: entry.requestPreview.endpointKey,
       ok: entry.ok,
       status: entry.status,
       statusText: entry.statusText,
@@ -6195,6 +6304,29 @@ function App() {
     const uniqueEndpoints = Array.from(new Set(endpoints));
     const primaryEndpoint = uniqueEndpoints[0] ?? '';
     const totalDurationMs = entries.reduce((sum, entry) => sum + (entry.durationMs ?? 0), 0);
+    const restParameterValues = new Map<string, Set<string>>();
+    const endpointConfigurations = new Map<string, BatchEndpointConfiguration>();
+    entries.forEach((entry) => {
+      const preview = entry.requestPreview;
+      const endpointKey = preview.endpointKey ?? preview.endpointTemplate ?? preview.url;
+      if (!endpointConfigurations.has(endpointKey)) {
+        endpointConfigurations.set(endpointKey, {
+          key: endpointKey,
+          endpoint: preview.url,
+          endpointTemplate: preview.endpointTemplate ?? preview.url,
+          runtimeParams: preview.endpointRuntimeParams ?? {},
+          headersTemplate: preview.headersTemplate ?? preview.headers,
+          queryTemplate: preview.queryTemplate ?? preview.query,
+          bodyMode: preview.bodyMode,
+          bodyTemplate: preview.bodyTemplate,
+        });
+      }
+      Object.entries(entry.requestPreview.restParameters ?? {}).forEach(([name, value]) => {
+        const values = restParameterValues.get(name) ?? new Set<string>();
+        values.add(value);
+        restParameterValues.set(name, values);
+      });
+    });
 
     // Keep history within localStorage limits: prefer storing every processed row so both the
     // source file and the full result set stay available; fall back to failed-only, then to none.
@@ -6228,6 +6360,8 @@ function App() {
       successCount,
       errorCount,
       endpoints: uniqueEndpoints,
+      endpointConfigurations: [...endpointConfigurations.values()],
+      restParameters: Object.fromEntries([...restParameterValues].map(([name, values]) => [name, [...values]])),
       sourceFileName: source.fileName || undefined,
       sourceColumns: source.sourceColumns && source.sourceColumns.length > 0 ? source.sourceColumns : undefined,
       sourceHasHeaderRow: source.hasHeaderRow ?? false,
@@ -6335,6 +6469,113 @@ function App() {
     setActiveSection('composer');
   }
 
+  function getBatchEndpointConfigurations(entry: RequestHistoryEntry): BatchEndpointConfiguration[] {
+    const summary = entry.batchSummary;
+    if (!summary) {
+      return [];
+    }
+    if (summary.endpointConfigurations && summary.endpointConfigurations.length > 0) {
+      return summary.endpointConfigurations;
+    }
+
+    return summary.endpoints.map((endpoint, index) => {
+      const request = summary.requests.find((item) => item.endpointTemplate === endpoint || item.endpoint === endpoint);
+      const key = request?.endpointKey ?? `legacy-${index}-${endpoint}`;
+      return {
+        key,
+        endpoint: request?.endpoint ?? endpoint,
+        endpointTemplate: request?.endpointTemplate ?? endpoint,
+        runtimeParams: request?.restParameters ?? {},
+        headersTemplate: request?.headers ?? {},
+        queryTemplate: request?.query ?? {},
+        bodyMode: request?.bodyMode ?? entry.bodyMode,
+        bodyTemplate: request?.body,
+      };
+    });
+  }
+
+  function applyBatchHistorySelection(entry: RequestHistoryEntry) {
+    const summary = entry.batchSummary;
+    if (!summary || !summary.requestsComplete) {
+      setStatusMessage('No se puede restaurar la selección: el historial no conserva todas las filas procesadas.');
+      return;
+    }
+
+    const configurations = getBatchEndpointConfigurations(entry);
+    if (!summary.endpointConfigurations?.length && configurations.length > 1) {
+      setStatusMessage('Este historial antiguo no conserva la relación entre endpoints y filas; no se puede restaurar una selección parcial.');
+      return;
+    }
+    const selectedKeys = new Set(historyBatchEndpointSelectionByEntryId[entry.id] ?? configurations.map((configuration) => configuration.key));
+    const selectedConfigurations = configurations.filter((configuration) => selectedKeys.has(configuration.key));
+    if (selectedConfigurations.length === 0) {
+      setStatusMessage('Selecciona al menos un endpoint para cargarlo en inicio.');
+      return;
+    }
+
+    const selectedRequests = summary.requests.filter((request) => (
+      selectedConfigurations.some((configuration) => request.endpointKey
+        ? request.endpointKey === configuration.key
+        : (request.endpointTemplate ?? request.endpoint) === configuration.endpointTemplate)
+    ));
+    const isPostBatch = entry.method !== 'GET';
+    const restoredRows = isPostBatch
+      ? [...new Map(selectedRequests.map((request) => [request.rowNumber, request])).values()]
+        .sort((left, right) => left.rowNumber - right.rowNumber)
+        .map((request) => ({
+          rowNumber: request.rowNumber,
+          cells: (summary.sourceColumns?.length ? summary.sourceColumns : Object.keys(request.fields))
+            .map((column) => request.fields[column] ?? ''),
+          fields: request.fields,
+        }))
+      : [];
+    const tupleIds = selectedConfigurations.map(() => createHistoryId());
+    const runtimeParamsByTupleId = Object.fromEntries(selectedConfigurations.map((configuration, index) => [
+      tupleIds[index], configuration.runtimeParams,
+    ]));
+    const primaryConfiguration = selectedConfigurations[0];
+
+    setMethod(entry.method);
+    setHeadersText(formatJson(primaryConfiguration.headersTemplate));
+    setQueryText(formatJson(primaryConfiguration.queryTemplate));
+    setAuthorizationScheme('NONE');
+    setDispatchErrors([]);
+    setResults([]);
+    setShowImportPanel(true);
+    setShowPreviewPanel(true);
+    setEndpointRuntimeParamsByTupleId(runtimeParamsByTupleId);
+    setPathParamValues({});
+
+    if (entry.method === 'GET') {
+      setGetEndpointTuples(selectedConfigurations.map((configuration) => configuration.endpointTemplate));
+      setGetEndpointTupleIds(tupleIds);
+      setSelectedGetEndpointIndex(0);
+    } else {
+      setBodyMode(primaryConfiguration.bodyMode);
+      setEndpoint(primaryConfiguration.endpointTemplate);
+      setPostEndpointTuples(selectedConfigurations.map((configuration) => configuration.endpointTemplate));
+      setPostEndpointTupleIds(tupleIds);
+      setSelectedPostEndpointIndex(0);
+      setFocusedPostEndpointIndex(0);
+      setEndpointRawBodiesByTupleId(Object.fromEntries(selectedConfigurations.map((configuration, index) => [
+        tupleIds[index], typeof configuration.bodyTemplate === 'string' ? configuration.bodyTemplate : '',
+      ])));
+      if (primaryConfiguration.bodyMode === 'JSON') {
+        setBodyTemplateText(formatJson(primaryConfiguration.bodyTemplate ?? {}));
+      } else {
+        setBodyTemplateText(typeof primaryConfiguration.bodyTemplate === 'string' ? primaryConfiguration.bodyTemplate : '');
+      }
+      setRows(restoredRows);
+      setSelectedRowIndex(0);
+      setFileName(summary.sourceFileName ?? '');
+      setFirstRowAsHeaders(summary.sourceHasHeaderRow ?? false);
+      setRawDelimiter('');
+    }
+
+    setActiveSection('composer');
+    setStatusMessage(`Se cargaron ${selectedConfigurations.length} endpoint(s) desde el historial${restoredRows.length > 0 ? ` con ${restoredRows.length} fila(s)` : ''}.`);
+  }
+
   function removeHistoryEntry(id: string) {
     setRequestHistory((current) => current.filter((entry) => entry.id !== id));
   }
@@ -6382,6 +6623,86 @@ function App() {
     setStatusMessage(t('Archivo origen exportado a CSV.'));
   }
 
+  function renderHistoryRestParameters(parameters?: Record<string, string[]>) {
+    const entries = Object.entries(parameters ?? {}).filter(([, values]) => values.length > 0);
+    if (entries.length === 0) {
+      return null;
+    }
+
+    const renderEntries = (items: Array<[string, string[]]>) => items.map(([name, values]) => (
+      <span className="history-rest-parameter" key={`${name}-${values.join('|')}`}>
+        <code>{`{{${name}}}`}</code><span>=</span><strong>{values.join(', ')}</strong>
+      </span>
+    ));
+
+    return (
+      <div className="history-rest-parameters">
+        <span className="history-rest-parameters-label">{t('Parámetros REST')}</span>
+        <div className="history-rest-parameters-values">
+          {renderEntries(entries.slice(0, 5))}
+          {entries.length > 5 ? (
+            <details className="history-rest-parameters-more">
+              <summary>{`${t('Ver restantes')} (${entries.length - 5})`}</summary>
+              <div>{renderEntries(entries.slice(5))}</div>
+            </details>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  function renderBatchEndpointSelector(entry: RequestHistoryEntry) {
+    const summary = entry.batchSummary;
+    if (!summary) {
+      return null;
+    }
+
+    const configurations = getBatchEndpointConfigurations(entry);
+    const selectedKeys = historyBatchEndpointSelectionByEntryId[entry.id] ?? configurations.map((configuration) => configuration.key);
+    const hasEndpointMapping = Boolean(summary.endpointConfigurations?.length) || configurations.length <= 1;
+    const canRestore = summary.requestsComplete && configurations.length > 0 && hasEndpointMapping;
+
+    return (
+      <details className="history-batch-load-selector">
+        <summary>{t('Seleccionar endpoints para cargar')}</summary>
+        <div className="history-batch-load-options">
+          {configurations.map((configuration) => (
+            <label className="history-batch-load-option" key={configuration.key}>
+              <input
+                type="checkbox"
+                checked={selectedKeys.includes(configuration.key)}
+                onChange={(event) => setHistoryBatchEndpointSelectionByEntryId((current) => {
+                  const selected = current[entry.id] ?? configurations.map((item) => item.key);
+                  return {
+                    ...current,
+                    [entry.id]: event.target.checked
+                      ? [...new Set([...selected, configuration.key])]
+                      : selected.filter((key) => key !== configuration.key),
+                  };
+                })}
+              />
+              <span>{configuration.endpointTemplate}</span>
+            </label>
+          ))}
+          {!summary.requestsComplete ? (
+            <p className="muted-small">{t('No se puede cargar: el historial no conserva todas las filas.')}</p>
+          ) : null}
+          {!hasEndpointMapping ? (
+            <p className="muted-small">{t('Este historial antiguo no conserva la relación entre endpoints y filas.')}</p>
+          ) : null}
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={!canRestore || selectedKeys.length === 0}
+            onClick={() => applyBatchHistorySelection(entry)}
+          >
+            {t('Cargar selección en inicio')}
+          </button>
+        </div>
+      </details>
+    );
+  }
+
   function renderBatchRequestsExplorer(entry: RequestHistoryEntry) {
     const summary = entry.batchSummary;
     if (!summary || summary.requests.length === 0) {
@@ -6390,6 +6711,7 @@ function App() {
       );
     }
 
+    const hasSuccessfulBatchRequest = summary.successCount > 0;
     const searchValue = historyBatchSearchByEntryId[entry.id] ?? '';
     const normalizedSearch = searchValue.trim().toLowerCase();
     const columns = summary.sourceColumns && summary.sourceColumns.length > 0
@@ -6492,7 +6814,21 @@ function App() {
                     ))}
                     <td title={request.endpoint}>{request.endpoint}</td>
                     <td>{request.ok ? 'OK' : (request.status ? `${request.status} ${request.statusText ?? ''}` : t('Error'))}</td>
-                    <td>{request.errorDetail ?? ''}</td>
+                    <td className="history-batch-detail-cell">
+                      <span>{request.errorDetail ?? ''}</span>
+                      {!request.ok
+                        && hasSuccessfulBatchRequest
+                        && /timeout|timed out|time out/i.test(`${request.errorDetail ?? ''} ${request.statusText ?? ''}`) ? (
+                          <span
+                            className="history-batch-timeout-warning"
+                            role="img"
+                            aria-label={t('Aunque no se ha recibido respuesta del endpoint comprueba que se haya procesado correctamente antes de volver a enviar la solicitud')}
+                            title={t('Aunque no se ha recibido respuesta del endpoint comprueba que se haya procesado correctamente antes de volver a enviar la solicitud')}
+                          >
+                            ⚠
+                          </span>
+                        ) : null}
+                    </td>
                     <td>
                       {request.responseBody !== undefined ? (
                         <button
@@ -6667,7 +7003,11 @@ function App() {
     const parsedHeaders = method === 'GET' ? {} : parseJsonInput(headersText, 'Las cabeceras');
     const parsedQuery = method === 'GET' ? {} : parseJsonInput(queryText, 'Los query params');
     const parsedBody = method !== 'GET' && bodyMode === 'JSON' ? parseJsonInput(bodyTemplateText, 'El body') : undefined;
-    const endpointSource = resolveEndpointWithPathParams(endpointOverride ?? (composedEndpoint || endpoint), tupleId);
+    const rawEndpoint = endpointOverride ?? (composedEndpoint || endpoint);
+    const endpointParams = (tupleId ? endpointRuntimeParamsByTupleId[tupleId] : undefined)
+      ?? pathParamValues[rawEndpoint]
+      ?? {};
+    const endpointSource = resolveEndpointWithPathParams(rawEndpoint, tupleId);
     const finalUrl = new URL(applyStringTemplate(endpointSource, row.fields, 'mask-secrets'));
     const query = normalizeStringMap(applyValueTemplate(parsedQuery, row.fields, 'mask-secrets'), 'Los query params');
 
@@ -6689,9 +7029,23 @@ function App() {
     return {
       method,
       url: finalUrl.toString(),
+      endpointTemplate: rawEndpoint,
+      endpointKey: tupleId ?? rawEndpoint,
+      endpointRuntimeParams: Object.fromEntries(extractEndpointRuntimeParams(rawEndpoint).map(({ name }) => [name, endpointParams[name] ?? ''])),
       headers,
       query,
+      headersTemplate: isRecord(parsedHeaders) ? parsedHeaders : {},
+      queryTemplate: isRecord(parsedQuery) ? parsedQuery : {},
+      restParameters: Object.fromEntries(extractEndpointRuntimeParams(rawEndpoint).map(({ name }) => [
+        name,
+        endpointParams[name] ?? row.fields[name] ?? '',
+      ])),
       bodyMode,
+      bodyTemplate: method === 'GET'
+        ? undefined
+        : bodyMode === 'RAW'
+          ? resolvedRaw
+          : parsedBody,
       body:
         method === 'GET'
           ? undefined
@@ -8791,7 +9145,19 @@ function App() {
             <>
               <label className="field compact-field">
                 <span>Timeout por solicitud (ms)</span>
-                <input type="number" min={1000} step={500} value={timeoutMs} onChange={(event) => setTimeoutMs(Number(event.target.value) || 0)} />
+                <input
+                  type="number"
+                  min={1000}
+                  max={120000}
+                  step={500}
+                  value={timeoutMs}
+                  onChange={(event) => {
+                    const parsed = Number(event.target.value);
+                    if (Number.isInteger(parsed) && parsed >= 1000 && parsed <= 120000) {
+                      setTimeoutMs(parsed);
+                    }
+                  }}
+                />
               </label>
 
               <label className="field checkbox-field compact-checkbox-field">
@@ -9504,6 +9870,7 @@ function App() {
                           <span className="favorite-match-url">{entry.finalUrl ?? entry.url}</span>
                         </div>
                       </div>
+                      {renderHistoryRestParameters(entry.batchSummary?.restParameters ?? entry.restParameters)}
 
                       <div className="panel-header history-card-header">
                         <p className="muted-small">{formatHistoryDate(entry.sentAt)}</p>
@@ -9529,6 +9896,7 @@ function App() {
                           </button>
                         </div>
                       </div>
+                      {entry.batchSummary ? renderBatchEndpointSelector(entry) : null}
 
                       {entry.batchSummary ? (
                         <>
@@ -9630,6 +9998,26 @@ function App() {
                               : `${t('Visualización de respuesta')}${entry.scriptCommandLabel ? ` (${entry.scriptCommandLabel})` : ''}`}
                           </summary>
                           {renderPostResponseOutput(entry.scriptOutput, entry.scriptCommandId)}
+                        </details>
+                      ) : null}
+                      {!entry.batchSummary && (entry.responseBody !== undefined || entry.responseHeaders !== undefined) ? (
+                        <details className="history-script-panel history-original-response">
+                          <summary>{t('Respuesta original')}</summary>
+                          <p className="muted-small">
+                            {entry.status !== undefined
+                              ? `${entry.status}${entry.statusText ? ` ${entry.statusText}` : ''}`
+                              : t('Sin respuesta HTTP')}
+                          </p>
+                          <div className="result-detail-grid">
+                            <div>
+                              <h3>{t('Cabeceras recibidas')}</h3>
+                              <pre>{formatJson(entry.responseHeaders ?? {})}</pre>
+                            </div>
+                            <div>
+                              <h3>{t('Cuerpo recibido')}</h3>
+                              <pre>{formatJson(entry.responseBody ?? null)}</pre>
+                            </div>
+                          </div>
                         </details>
                       ) : null}
                     </article>
@@ -10797,6 +11185,23 @@ function App() {
                   <option value="basic">{appLanguage === 'en' ? 'Basic' : 'Basico'}</option>
                   <option value="advanced">{appLanguage === 'en' ? 'Advanced' : 'Avanzado'}</option>
                 </select>
+              </label>
+
+              <label className="field">
+                <span>{t('Timeout por defecto (ms)')}</span>
+                <input
+                  type="number"
+                  min={1000}
+                  max={120000}
+                  step={500}
+                  value={timeoutMs}
+                  onChange={(event) => {
+                    const parsed = Number(event.target.value);
+                    if (Number.isInteger(parsed) && parsed >= 1000 && parsed <= 120000) {
+                      setTimeoutMs(parsed);
+                    }
+                  }}
+                />
               </label>
 
               <div className="field settings-method-filter-field">

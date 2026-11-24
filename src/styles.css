@@ -1916,6 +1916,96 @@ pre {
   border-color: color-mix(in srgb, var(--card-active-border) 68%, var(--line) 32%);
 }
 
+.history-rest-parameters {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.7rem;
+  padding: 0.42rem 0.15rem 0.15rem;
+}
+
+.history-rest-parameters-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.history-rest-parameters-values,
+.history-rest-parameters-more > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem 0.75rem;
+}
+
+.history-rest-parameter {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  min-width: 0;
+  color: var(--text);
+  font-size: 0.76rem;
+  overflow-wrap: anywhere;
+}
+
+.history-rest-parameter code {
+  color: var(--accent-strong);
+  font-size: inherit;
+}
+
+.history-rest-parameter strong {
+  font-weight: 650;
+}
+
+.history-rest-parameters-more {
+  color: var(--accent-strong);
+  font-size: 0.76rem;
+}
+
+.history-rest-parameters-more summary {
+  cursor: pointer;
+}
+
+.history-rest-parameters-more > div {
+  padding-top: 0.32rem;
+}
+
+.history-batch-load-selector {
+  margin: 0.25rem 0 0.75rem;
+}
+
+.history-batch-load-selector > summary {
+  color: var(--accent-strong);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.history-batch-load-options {
+  display: grid;
+  gap: 0.55rem;
+  max-height: 16rem;
+  overflow: auto;
+  padding: 0.7rem 0.1rem;
+}
+
+.history-batch-load-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  min-width: 0;
+  font-size: 0.8rem;
+}
+
+.history-batch-load-option input {
+  flex: 0 0 auto;
+  margin-top: 0.15rem;
+}
+
+.history-batch-load-option span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .history-card-header {
   align-items: flex-start;
 }
@@ -1984,6 +2074,23 @@ pre {
 
 .history-batch-row-error {
   background: color-mix(in srgb, var(--danger-bg) 60%, transparent 40%);
+}
+
+.history-batch-detail-cell {
+  white-space: nowrap;
+}
+
+.history-batch-timeout-warning {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0.45rem;
+  color: #f2c94c;
+  font-size: 1.1rem;
+  font-weight: 800;
+  line-height: 1;
+  cursor: help;
+  vertical-align: middle;
 }
 
 .history-batch-view-response-button {
