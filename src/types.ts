@@ -150,6 +150,9 @@ export interface FavoriteEndpointEntry {
   description: string;
   url: string;
   method: HttpMethod;
+  defaultRawBody?: string;
+  safetyAdvice?: string;
+  safetyCheckActive?: boolean;
   environment: FavoriteEnvironment;
   createdAt: string;
 }
@@ -169,6 +172,8 @@ export interface FavoriteCommandEntry {
   description: string;
   command: string;
   defaultRawBody?: string;
+  safetyAdvice?: string;
+  safetyCheckActive?: boolean;
   postResponseScript?: string;
   method: HttpMethod;
   environment?: FavoriteEnvironment;

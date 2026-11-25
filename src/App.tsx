@@ -68,6 +68,8 @@ const FAVORITE_ENDPOINT_ENV_MIGRATION_KEY = 'postais.favoriteEndpointEnvironment
 const FAVORITE_REQUESTS_STORAGE_KEY = 'postais.favoriteRequests.v1';
 const SHOW_COMPOSER_FAVORITES_LIST_PREF_STORAGE_KEY = 'postais.showComposerFavoritesList';
 const BASIC_METHOD_FILTER_PREF_STORAGE_KEY = 'postais.basicMethodFilter';
+const DEFAULT_SAFETY_CHECKS_ENABLED_PREF_KEY = 'postais.defaultSafetyChecksEnabled';
+const DEFAULT_SAFETY_CHECK_METHODS_PREF_KEY = 'postais.defaultSafetyCheckMethods';
 const AUTO_EXPAND_RESULTS_PREF_STORAGE_KEY = 'postais.autoExpandResults';
 const AUTO_EXPAND_RESULTS_LIMIT_PREF_STORAGE_KEY = 'postais.autoExpandResultsLimit';
 const MAX_REQUEST_HISTORY_ENTRIES = 150;
@@ -1586,6 +1588,9 @@ function toFavoriteEndpointEntry(value: string | FavoriteEndpointEntry): Favorit
     description: typeof value.description === 'string' ? normalizeRestDescription(value.description) : '',
     url: normalizedUrl,
     method: isHttpMethod(value.method) ? value.method : 'GET',
+    defaultRawBody: typeof value.defaultRawBody === 'string' ? value.defaultRawBody : undefined,
+    safetyAdvice: typeof value.safetyAdvice === 'string' ? value.safetyAdvice : '',
+    safetyCheckActive: typeof value.safetyCheckActive === 'boolean' ? value.safetyCheckActive : undefined,
     environment: isFavoriteEnvironment(value.environment) ? value.environment : 'DEV',
     createdAt: typeof value.createdAt === 'string' ? value.createdAt : new Date().toISOString(),
   };
@@ -1707,6 +1712,8 @@ function toFavoriteCommandEntry(value: FavoriteCommandEntry | string): FavoriteC
     description: typeof value.description === 'string' ? normalizeRestDescription(value.description) : '',
     command: normalizedCommand,
     defaultRawBody: typeof value.defaultRawBody === 'string' ? value.defaultRawBody : '',
+    safetyAdvice: typeof value.safetyAdvice === 'string' ? value.safetyAdvice : '',
+    safetyCheckActive: typeof value.safetyCheckActive === 'boolean' ? value.safetyCheckActive : undefined,
     postResponseScript: typeof value.postResponseScript === 'string' ? value.postResponseScript : '',
     method: isHttpMethod(value.method) ? value.method : 'GET',
     createdAt: typeof value.createdAt === 'string' ? value.createdAt : new Date().toISOString(),
@@ -1734,6 +1741,8 @@ function loadStoredFavoriteCommands(): FavoriteCommandEntry[] {
         candidate.command === entry.command
         && candidate.method === entry.method
         && (candidate.defaultRawBody ?? '') === (entry.defaultRawBody ?? '')
+        && (candidate.safetyAdvice ?? '') === (entry.safetyAdvice ?? '')
+        && (candidate.safetyCheckActive ?? null) === (entry.safetyCheckActive ?? null)
         && normalizeRestDescription(candidate.description ?? '') === normalizeRestDescription(entry.description ?? '')
         && (candidate.postResponseScript ?? '') === (entry.postResponseScript ?? '')
       )) === index,
@@ -2585,6 +2594,22 @@ function App() {
       return defaults;
     }
   });
+  const [defaultSafetyChecksEnabled, setDefaultSafetyChecksEnabled] = useState(() => {
+    try {
+      return window.localStorage.getItem(DEFAULT_SAFETY_CHECKS_ENABLED_PREF_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [defaultSafetyCheckMethods, setDefaultSafetyCheckMethods] = useState<Record<HttpMethod, boolean>>(() => {
+    const defaults = { GET: false, POST: false, PATCH: false, PUT: false, DELETE: false } satisfies Record<HttpMethod, boolean>;
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(DEFAULT_SAFETY_CHECK_METHODS_PREF_KEY) ?? '{}') as Partial<Record<HttpMethod, boolean>>;
+      return HTTP_METHOD_ORDER.reduce((current, candidate) => ({ ...current, [candidate]: stored[candidate] === true }), defaults);
+    } catch {
+      return defaults;
+    }
+  });
   const [method, setMethod] = useState<HttpMethod>(() => {
     try {
       const stored = window.localStorage.getItem(METHOD_PREF_STORAGE_KEY);
@@ -2805,6 +2830,7 @@ function App() {
   const favoriteBaseEndpointsImportInputRef = useRef<HTMLInputElement | null>(null);
   const favoriteCommandsImportInputRef = useRef<HTMLInputElement | null>(null);
   const pendingConfirmActionRef = useRef<null | (() => void)>(null);
+  const descriptionReturnFocusRef = useRef<HTMLElement | null>(null);
   const authBootstrapDoneRef = useRef(false);
   const skipBaseDescriptionBlurRef = useRef(false);
   const skipCommandDescriptionBlurRef = useRef(false);
@@ -3514,6 +3540,15 @@ function App() {
 
   useEffect(() => {
     try {
+      window.localStorage.setItem(DEFAULT_SAFETY_CHECKS_ENABLED_PREF_KEY, defaultSafetyChecksEnabled ? 'true' : 'false');
+      window.localStorage.setItem(DEFAULT_SAFETY_CHECK_METHODS_PREF_KEY, JSON.stringify(defaultSafetyCheckMethods));
+    } catch {
+      // Ignore persistence failures (private mode / restricted storage).
+    }
+  }, [defaultSafetyChecksEnabled, defaultSafetyCheckMethods]);
+
+  useEffect(() => {
+    try {
       window.localStorage.setItem(SHOW_COMPOSER_FAVORITES_LIST_PREF_STORAGE_KEY, showFavoriteCommandsListInComposer ? 'true' : 'false');
     } catch {
       // Ignore persistence failures (private mode / restricted storage).
@@ -3825,18 +3860,43 @@ function App() {
     setStatusMessage(`Endpoint base cargado en el constructor: ${value}`);
   }
 
-  function applyFavoriteCommand(entry: FavoriteCommandEntry) {
-    setCommandEndpoint(entry.command);
-    if (entry.method === 'POST') {
-      const raw = entry.defaultRawBody ?? '';
-      setBodyMode('RAW');
-      setRawBodyText(raw);
-      // Store in draft (not in active tuple) — the active tuple's RAW must not be overwritten here
-      setComposerDraftRawBody(raw);
+  function isFavoriteSafetyCheckActive(entry: FavoriteCommandEntry | FavoriteEndpointEntry): boolean {
+    return entry.safetyCheckActive ?? (defaultSafetyChecksEnabled && defaultSafetyCheckMethods[entry.method]);
+  }
+
+  function confirmFavoriteLoad(
+    kind: 'endpoint' | 'comando',
+    value: string,
+    safetyAdvice: string | undefined,
+    isActive: boolean,
+    action: () => void,
+  ) {
+    if (!isActive) {
+      action();
+      return;
     }
-    setHideCommandMatchesUntilEdit(true);
-    setActiveCommandMatchIndex(-1);
-    setStatusMessage(`Comando cargado en el constructor: ${entry.command}`);
+
+    openConfirmDialog({
+      title: 'Confirmar carga en Inicio',
+      description: safetyAdvice?.trim() || `¿Seguro quieres cargar el siguiente ${kind}?`,
+      detailLines: [value],
+      confirmLabel: 'Aceptar y cargar',
+    }, action);
+  }
+
+  function applyFavoriteCommand(entry: FavoriteCommandEntry) {
+    confirmFavoriteLoad('comando', entry.command, entry.safetyAdvice, isFavoriteSafetyCheckActive(entry), () => {
+      setCommandEndpoint(entry.command);
+      if (entry.method === 'POST') {
+        const raw = entry.defaultRawBody ?? '';
+        setBodyMode('RAW');
+        setRawBodyText(raw);
+        setComposerDraftRawBody(raw);
+      }
+      setHideCommandMatchesUntilEdit(true);
+      setActiveCommandMatchIndex(-1);
+      setStatusMessage(`Comando cargado en el constructor: ${entry.command}`);
+    });
   }
 
   function handleBaseEndpointKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
@@ -4826,6 +4886,7 @@ function App() {
                   <button
                     type="button"
                     className="favorite-description-button"
+                    onMouseDown={(event) => event.preventDefault()}
                     onClick={() => openFavoriteDescriptionDialog(favorite)}
                     title={favorite.description || 'Anadir descripcion REST'}
                   >
@@ -4837,7 +4898,7 @@ function App() {
                   type="button"
                   className="favorite-match-button favorite-summary-surface"
                   onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => applyFavoriteEndpoint(favorite.url, targetMethod, applyIndex)}
+                  onClick={() => applyFavoriteEndpoint(favorite.url, targetMethod, applyIndex, favorite.defaultRawBody, favorite.safetyAdvice, isFavoriteSafetyCheckActive(favorite))}
                   title={favorite.url}
                 >
                   <span className="favorite-match-url">{favorite.url}</span>
@@ -4980,12 +5041,19 @@ function App() {
     );
   }
 
-  function toggleFavoriteEndpoint(value: string, endpointMethod: HttpMethod) {
+  function toggleFavoriteEndpoint(value: string, endpointMethod: HttpMethod, endpointIndex?: number) {
     const normalized = normalizeFavoriteEndpoint(value);
     if (!normalized) {
       setStatusMessage('Escribe un endpoint valido antes de anadirlo a favoritos.');
       return;
     }
+
+    const tupleId = endpointMethod === 'POST'
+      ? postEndpointTupleIds[endpointIndex ?? selectedPostEndpointIndex]
+      : undefined;
+    const defaultRawBody = endpointMethod === 'POST' && bodyMode === 'RAW'
+      ? resolveRawBodyForPostTuple(tupleId)
+      : undefined;
 
     setFavoriteEndpoints((current) => {
       const existing = current.find((entry) => entry.url === normalized && entry.method === endpointMethod && entry.environment === favoriteEnvironment);
@@ -5001,32 +5069,44 @@ function App() {
         description: '',
         url: normalized,
         method: endpointMethod,
+        defaultRawBody,
         environment: favoriteEnvironment,
         createdAt: new Date().toISOString(),
       }, ...current.filter((entry) => !(entry.url === normalized && entry.method === endpointMethod && entry.environment === favoriteEnvironment))];
     });
   }
 
-  function applyFavoriteEndpoint(value: string, target: HttpMethod, index?: number) {
-    if (target === 'POST') {
-      const targetIndex = index ?? focusedPostEndpointIndex ?? selectedPostEndpointIndex;
-      setMethod(target);
-      setPostEndpointTuples((current) => current.map((entry, entryIndex) => (entryIndex === targetIndex ? value : entry)));
-      setSelectedPostEndpointIndex(targetIndex);
-      setFocusedPostEndpointIndex(targetIndex);
-      setEndpoint(value);
-      setHidePostEndpointMatchesByIndex((current) => ({ ...current, [targetIndex]: true }));
-      setActiveSection('composer');
-      setStatusMessage('Endpoint favorito cargado en Inicio (POST).');
-      return;
-    }
+  function applyFavoriteEndpoint(value: string, target: HttpMethod, index?: number, defaultRawBody?: string, safetyAdvice?: string, safetyCheckActive = false) {
+    confirmFavoriteLoad('endpoint', value, safetyAdvice, safetyCheckActive, () => {
+      if (target === 'POST') {
+        const targetIndex = index ?? focusedPostEndpointIndex ?? selectedPostEndpointIndex;
+        const tupleId = postEndpointTupleIds[targetIndex];
+        setMethod(target);
+        setPostEndpointTuples((current) => current.map((entry, entryIndex) => (entryIndex === targetIndex ? value : entry)));
+        setSelectedPostEndpointIndex(targetIndex);
+        setFocusedPostEndpointIndex(targetIndex);
+        setEndpoint(value);
+        setComposerDraftRawBody(null);
+        setRawBodyText(defaultRawBody ?? '');
+        if (defaultRawBody !== undefined) {
+          setBodyMode('RAW');
+        }
+        if (tupleId) {
+          setEndpointRawBodiesByTupleId((current) => ({ ...current, [tupleId]: defaultRawBody ?? '' }));
+        }
+        setHidePostEndpointMatchesByIndex((current) => ({ ...current, [targetIndex]: true }));
+        setActiveSection('composer');
+        setStatusMessage('Endpoint favorito cargado en Inicio (POST).');
+        return;
+      }
 
-    const targetIndex = index ?? focusedGetEndpointIndex ?? selectedGetEndpointIndex;
-    setMethod('GET');
-    setGetEndpointTuples((current) => current.map((entry, entryIndex) => (entryIndex === targetIndex ? value : entry)));
-    setHideGetEndpointMatchesByIndex((current) => ({ ...current, [targetIndex]: true }));
-    setActiveSection('composer');
-    setStatusMessage('Endpoint favorito cargado en Inicio (GET).');
+      const targetIndex = index ?? focusedGetEndpointIndex ?? selectedGetEndpointIndex;
+      setMethod('GET');
+      setGetEndpointTuples((current) => current.map((entry, entryIndex) => (entryIndex === targetIndex ? value : entry)));
+      setHideGetEndpointMatchesByIndex((current) => ({ ...current, [targetIndex]: true }));
+      setActiveSection('composer');
+      setStatusMessage('Endpoint favorito cargado en Inicio (GET).');
+    });
   }
 
   function updatePostEndpoint(value: string) {
@@ -5635,6 +5715,7 @@ function App() {
   }
 
   function openFavoriteDescriptionDialog(favorite: FavoriteEndpointEntry) {
+    descriptionReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setDescriptionDialog({
       favoriteId: favorite.id,
       currentValue: favorite.description,
@@ -5646,6 +5727,13 @@ function App() {
   function closeFavoriteDescriptionDialog() {
     setDescriptionDialog(null);
     setDescriptionDraft('');
+    const focusTarget = descriptionReturnFocusRef.current;
+    descriptionReturnFocusRef.current = null;
+    window.requestAnimationFrame(() => {
+      if (focusTarget?.isConnected) {
+        focusTarget.focus();
+      }
+    });
   }
 
   function saveFavoriteDescriptionDialog() {
@@ -6081,6 +6169,8 @@ function App() {
           command: normalizeFavoriteCommand(item.command),
           method: item.method,
           defaultRawBody: typeof item.defaultRawBody === 'string' ? item.defaultRawBody : '',
+          safetyAdvice: typeof item.safetyAdvice === 'string' ? item.safetyAdvice : '',
+          safetyCheckActive: typeof item.safetyCheckActive === 'boolean' ? item.safetyCheckActive : undefined,
           postResponseScript: typeof item.postResponseScript === 'string' ? item.postResponseScript : '',
         }))
         .filter((item) => item.command !== '');
@@ -6093,6 +6183,8 @@ function App() {
         entry.method,
         normalizeFavoriteCommand(entry.command),
         entry.defaultRawBody ?? '',
+        entry.safetyAdvice ?? '',
+        entry.safetyCheckActive === undefined ? '' : String(entry.safetyCheckActive),
         normalizeRestDescription(entry.description ?? ''),
         entry.postResponseScript ?? '',
       ].join('|');
@@ -8875,6 +8967,13 @@ function App() {
                         {isFavoriteEndpoint(endpointTuple, 'GET') ? '★' : '☆'}
                       </button>
                     </div>
+                    {renderEndpointMatches(
+                      getEndpointMatches,
+                      endpointTuple,
+                      'GET',
+                      focusedGetEndpointIndex === index && !Boolean(hideGetEndpointMatchesByIndex[index]),
+                      index,
+                    )}
                     {extractEndpointRuntimeParams(endpointTuple).length > 0 && (
                       <div className="path-params-row">
                         {extractEndpointRuntimeParams(endpointTuple).map((param) => (
@@ -8953,13 +9052,20 @@ function App() {
                       <button
                         type="button"
                         className={`favorite-toggle-button ${isFavoriteEndpoint(endpointTuple, 'POST') ? 'favorite-toggle-button-active' : ''}`}
-                        onClick={() => toggleFavoriteEndpoint(endpointTuple, 'POST')}
+                        onClick={() => toggleFavoriteEndpoint(endpointTuple, 'POST', index)}
                         title={isFavoriteEndpoint(endpointTuple, 'POST') ? 'Quitar de favoritos' : 'Anadir a favoritos'}
                         aria-label={isFavoriteEndpoint(endpointTuple, 'POST') ? 'Quitar de favoritos' : 'Anadir a favoritos'}
                       >
                         {isFavoriteEndpoint(endpointTuple, 'POST') ? '★' : '☆'}
                       </button>
                     </div>
+                    {renderEndpointMatches(
+                      postEndpointMatches,
+                      endpointTuple,
+                      'POST',
+                      focusedPostEndpointIndex === index && !Boolean(hidePostEndpointMatchesByIndex[index]),
+                      index,
+                    )}
                     {extractEndpointRuntimeParams(endpointTuple).length > 0 && (
                       <div className="path-params-row">
                         {extractEndpointRuntimeParams(endpointTuple).map((param) => (
@@ -9121,25 +9227,6 @@ function App() {
           </div>
 
           {renderComposerMatchesPanel()}
-
-          {method === 'GET'
-            ? renderEndpointMatches(
-                getEndpointMatches,
-                focusedGetEndpoint,
-                'GET',
-                focusedGetEndpointIndex !== null && !Boolean(hideGetEndpointMatchesByIndex[focusedGetEndpointIndex]),
-                focusedGetEndpointIndex ?? undefined,
-              )
-            : null}
-          {method !== 'GET'
-            ? renderEndpointMatches(
-                postEndpointMatches,
-                focusedPostEndpoint,
-                'POST',
-                focusedPostEndpointIndex !== null && !Boolean(hidePostEndpointMatchesByIndex[focusedPostEndpointIndex]),
-                focusedPostEndpointIndex ?? undefined,
-              )
-            : null}
 
           {interfaceMode === 'advanced' ? (
             <>
@@ -10502,6 +10589,19 @@ function App() {
                           ) : null}
 
                           <label className="field stretch-full">
+                            <span>Consejo de seguridad al cargar</span>
+                            <textarea
+                              value={entry.safetyAdvice ?? ''}
+                              onChange={(event) => setFavoriteCommands((current) => current.map((candidate) => (
+                                candidate.id === entry.id ? { ...candidate, safetyAdvice: event.target.value } : candidate
+                              )))}
+                              rows={3}
+                              placeholder="Dejar vacío para mostrar la confirmación genérica"
+                              aria-label={`Consejo de seguridad para ${entry.command}`}
+                            />
+                          </label>
+
+                          <label className="field stretch-full">
                             <span>Script post-respuesta</span>
                             <textarea
                               value={entry.postResponseScript ?? ''}
@@ -10513,6 +10613,20 @@ function App() {
                           </label>
 
                           <div className="action-row">
+                            <button
+                              type="button"
+                              className="ghost-button"
+                              aria-label={`${isFavoriteSafetyCheckActive(entry) ? 'Desactivar' : 'Activar'} check de seguridad para ${entry.command}`}
+                              aria-pressed={isFavoriteSafetyCheckActive(entry)}
+                              title={isFavoriteSafetyCheckActive(entry) ? 'Check de seguridad activo' : 'Check de seguridad inactivo'}
+                              onClick={() => setFavoriteCommands((current) => current.map((candidate) => (
+                                candidate.id === entry.id
+                                  ? { ...candidate, safetyCheckActive: !isFavoriteSafetyCheckActive(candidate) }
+                                  : candidate
+                              )))}
+                            >
+                              {isFavoriteSafetyCheckActive(entry) ? '🔒' : '🔓'}
+                            </button>
                             <button type="button" className="secondary-button" onClick={() => applyFavoriteCommand(entry)}>
                               Usar como comando
                             </button>
@@ -10619,8 +10733,47 @@ function App() {
                             <option value="POST">POST</option>
                           </select>
                         </div>
+                        {entry.method === 'POST' ? (
+                          <label className="field favorite-endpoint-raw-field">
+                            <span>{t('RAW por defecto')}</span>
+                            <textarea
+                              rows={5}
+                              value={entry.defaultRawBody ?? ''}
+                              onChange={(event) => setFavoriteEndpoints((current) => current.map((candidate) => (
+                                candidate.id === entry.id ? { ...candidate, defaultRawBody: event.target.value } : candidate
+                              )))}
+                              placeholder="Body RAW que se cargara al elegir este endpoint"
+                            />
+                            <small className="muted-small">{t('Se aplicará al cargar este endpoint POST en Inicio.')}</small>
+                          </label>
+                        ) : null}
+                        <label className="field stretch-full">
+                          <span>Consejo de seguridad al cargar</span>
+                          <textarea
+                            rows={3}
+                            value={entry.safetyAdvice ?? ''}
+                            onChange={(event) => setFavoriteEndpoints((current) => current.map((candidate) => (
+                              candidate.id === entry.id ? { ...candidate, safetyAdvice: event.target.value } : candidate
+                            )))}
+                            placeholder="Dejar vacío para mostrar la confirmación genérica"
+                          />
+                        </label>
                         <div className="action-row">
-                          <button type="button" className="secondary-button" onClick={() => applyFavoriteEndpoint(entry.url, entry.method)}>
+                          <button
+                            type="button"
+                            className="ghost-button"
+                            aria-label={`${isFavoriteSafetyCheckActive(entry) ? 'Desactivar' : 'Activar'} check de seguridad para ${entry.url}`}
+                            aria-pressed={isFavoriteSafetyCheckActive(entry)}
+                            title={isFavoriteSafetyCheckActive(entry) ? 'Check de seguridad activo' : 'Check de seguridad inactivo'}
+                            onClick={() => setFavoriteEndpoints((current) => current.map((candidate) => (
+                              candidate.id === entry.id
+                                ? { ...candidate, safetyCheckActive: !isFavoriteSafetyCheckActive(candidate) }
+                                : candidate
+                            )))}
+                          >
+                            {isFavoriteSafetyCheckActive(entry) ? '🔒' : '🔓'}
+                          </button>
+                          <button type="button" className="secondary-button" onClick={() => applyFavoriteEndpoint(entry.url, entry.method, undefined, entry.defaultRawBody, entry.safetyAdvice, isFavoriteSafetyCheckActive(entry))}>
                             Cargar en endpoint {entry.method}
                           </button>
                           <button type="button" className="ghost-button" onClick={() => setFavoriteEndpoints((current) => current.filter((candidate) => candidate.id !== entry.id))}>
@@ -11231,6 +11384,35 @@ function App() {
                               return next;
                             });
                           }}
+                        />
+                        <span>{candidateMethod}</span>
+                      </label>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="field settings-method-filter-field">
+                <label className="checkbox-field compact-checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={defaultSafetyChecksEnabled}
+                    onChange={(event) => setDefaultSafetyChecksEnabled(event.target.checked)}
+                  />
+                  <span>Habilitar por defecto check de seguridad para métodos</span>
+                </label>
+                {defaultSafetyChecksEnabled ? (
+                  <div className="settings-method-filter-list">
+                    <small className="muted-small">Elige los métodos que pedirán confirmación por defecto.</small>
+                    {HTTP_METHOD_ORDER.map((candidateMethod) => (
+                      <label key={`default-safety-check-${candidateMethod}`} className="checkbox-field compact-checkbox-field">
+                        <input
+                          type="checkbox"
+                          checked={defaultSafetyCheckMethods[candidateMethod]}
+                          onChange={(event) => setDefaultSafetyCheckMethods((current) => ({
+                            ...current,
+                            [candidateMethod]: event.target.checked,
+                          }))}
                         />
                         <span>{candidateMethod}</span>
                       </label>

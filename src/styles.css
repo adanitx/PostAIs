@@ -2019,6 +2019,11 @@ pre {
   margin: 0;
 }
 
+.favorite-endpoint-raw-field textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
+
 .history-meta-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }

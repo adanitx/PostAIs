@@ -1,5 +1,15 @@
 # PostAIs
 
+## Novedades v2.2.0
+
+- Los endpoints POST favoritos conservan su body RAW por defecto, que se puede editar y restaurar al cargar el endpoint.
+- Los checks de seguridad se pueden habilitar por método en Configuración o individualmente mediante el candado de cada favorito; están desactivados por defecto.
+- Cada favorito puede mostrar un consejo de seguridad personalizado antes de cargarse en Inicio.
+- Las coincidencias de endpoints aparecen junto a la fila editada y el diálogo de descripción REST conserva la coincidencia y el foco.
+- Vite excluye los directorios de empaquetado del watcher para evitar errores con archivos temporales bloqueados.
+
+Consulta el detalle completo en [release-notes-v2.2.0.md](release-notes-v2.2.0.md).
+
 ## Novedades v2.1.0
 
 - El timeout predeterminado se configura desde Configuración, se conserva entre sesiones y admite valores de 1.000 a 120.000 ms.
